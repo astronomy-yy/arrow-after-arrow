@@ -57,6 +57,9 @@ python main.py
 - **随机关卡**：按 `N` 或从菜单点「随机关卡」，用同一套生成器现场生成一关，不写入存档进度。
 - **AI 求解**：`game/solver.py` 把「谁挡谁」建成有向图做**拓扑排序**，O(n²) 精确判定，
   既能给出下一步提示（H），也能自动替你通关（A）；图里有环才判为无解。
+- **飞出动画**：整条线沿自身折线「流」出去 —— 取的是折线真正的一段（拐角不会被两点间的
+  斜弦切掉），直段画实心矩形、只有拐角与两端补圆点，圆点与箭头用 4 倍超采样做抗锯齿；
+  单帧步进夹了 50 ms 上限，切窗口回来也不会「瞬移」。详见 `docs/design.md` 第 7 节。
 
 ## 项目结构
 
@@ -72,7 +75,7 @@ arrow-after-arrow/
 │   ├── level.py               # 12 关关卡数据（由 tools/generate_levels.py 生成）
 │   ├── board.py               # 棋盘：占据网格、射线检测、撤销、重置
 │   ├── solver.py              # 拓扑排序求解器：提示 / 自动通关共用
-│   ├── animations.py          # 飞出滑行、残影、弹回摆动、提示呼吸
+│   ├── animations.py          # 飞出滑行（沿折线取段）、残影、弹回摆动、提示呼吸
 │   ├── hud.py                 # 顶栏 / 底栏控件
 │   ├── icons.py               # 全部图标都是代码画的矢量图，无图片素材
 │   ├── ui.py                  # 按钮、图标按钮、日夜拨杆、滑杆、菜单面板
@@ -82,10 +85,10 @@ arrow-after-arrow/
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
 │   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
-├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 端到端
+├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 动效 / 端到端
 ├── docs/
-│   ├── design.md              # 设计说明：数据结构、算法、界面布局
-│   └── test-record.md         # T01–T09 测试记录
+│   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
+│   └── test-record.md         # T01–T10 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -95,7 +98,7 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 128 个用例，无窗口运行
+python -m pytest -q                    # 150 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
@@ -116,6 +119,6 @@ python tools/screenshot.py             # 重新导出 README 用的截图
 |---|---|
 | ![第12关](assets/screenshots/playing_level12.png) | ![通关](assets/screenshots/level_clear.png) |
 
-| 放大后拖到一侧（可见区只剩棋盘的一部分） |
-|---|
-| ![缩放拖动](assets/screenshots/playing_zoom_pan.png) |
+| 飞行中的一帧（线正沿自身折线滑出，尾迹逐格点亮） | 放大后拖到一侧（可见区只剩棋盘的一部分） |
+|---|---|
+| ![飞出](assets/screenshots/playing_flying.png) | ![缩放拖动](assets/screenshots/playing_zoom_pan.png) |
