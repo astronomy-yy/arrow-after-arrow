@@ -1,6 +1,6 @@
 """一箭又一箭（Arrow After Arrow）游戏入口。
 
-阶段 6：鼠标点击判定、飞出/碰撞动画、失误扣减、通关/失败、重新开始。
+阶段 7：箭形美化、飞出加速淡出、碰撞红闪、悬停高亮与按钮按压反馈。
 临时调试快捷键（阶段 8 删除）：
     C   模拟当前关通关
     F   模拟失败
@@ -23,6 +23,7 @@ from game.settings import (
     BOARD_TOP_MARGIN,
     CELL_GAP,
     CELL_SIZE,
+    COLOR_ACCENT,
     COLOR_ARROW,
     COLOR_BG,
     COLOR_CELL_A,
@@ -43,6 +44,8 @@ from game.settings import (
 from game.states import GameState
 from game.ui import Button
 
+ARROW_SIZE = int(CELL_SIZE * 0.6)
+
 
 class Game:
     """游戏主控制器：状态、关卡、动画与主循环。"""
@@ -53,13 +56,11 @@ class Game:
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
 
-        # 字体
         self.font_title = pygame.font.SysFont(FONT_NAME, 60, bold=True)
         self.font_big = pygame.font.SysFont(FONT_NAME, 40, bold=True)
         self.font_normal = pygame.font.SysFont(FONT_NAME, 26)
         self.font_small = pygame.font.SysFont(FONT_NAME, 21)
 
-        # 状态与关卡
         self.state = GameState.START
         self.level_index = 0
         self.board = Board(LEVELS[self.level_index])
@@ -67,13 +68,14 @@ class Game:
         self.board_pixel_w = self.board_pixel_h = 0
         self._compute_board_geometry()
 
-        # 动画与提示
-        self.flying = []        # 正在飞出的 FlyingArrow 列表
-        self.blocked = []       # 被挡反馈 BlockedFeedback 列表
+        # 动画、提示与悬停
+        self.flying = []
+        self.blocked = []
         self.toast_text = ""
         self.toast_timer = 0.0
+        self.hover_cell = None
 
-        # 各界面按钮
+        # 按钮
         cx = WINDOW_WIDTH // 2
         self.start_button = Button(
             (cx, 510), (230, 66), "开始游戏", self.start_game, self.font_big
@@ -99,7 +101,7 @@ class Game:
             self.back_home, self.font_normal
         )
 
-    # ---------------- 状态切换动作 ----------------
+    # ---------------- 状态切换 ----------------
     def start_game(self):
         self.level_index = 0
         self._load_level(0)
@@ -126,11 +128,11 @@ class Game:
         self._compute_board_geometry()
 
     def _clear_effects(self):
-        """清空所有动画与提示（切关、重开、回开始时调用）。"""
         self.flying.clear()
         self.blocked.clear()
         self.toast_text = ""
         self.toast_timer = 0.0
+        self.hover_cell = None
 
     # ---------------- 棋盘几何 ----------------
     def _compute_board_geometry(self):
@@ -142,6 +144,10 @@ class Game:
         )
         self.board_x = (WINDOW_WIDTH - self.board_pixel_w) // 2
         self.board_y = TOP_BAR_HEIGHT + BOARD_TOP_MARGIN
+
+    def _board_rect(self):
+        return pygame.Rect(self.board_x, self.board_y,
+                           self.board_pixel_w, self.board_pixel_h)
 
     def _cell_rect(self, r, c):
         x = self.board_x + c * (CELL_SIZE + CELL_GAP)
@@ -161,11 +167,10 @@ class Game:
                 return r, c
         return None
 
-    # ---------------- 点击处理 ----------------
+    # ---------------- 点击与悬停 ----------------
     def _handle_board_click(self, event):
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return
-        # 动画播放期间不接受点击，避免连点造成状态混乱
         if self.flying or self.blocked:
             return
 
@@ -175,31 +180,38 @@ class Game:
         r, c = cell
 
         if self.board.is_empty(r, c):
-            return  # 点击空白格：不处理、不扣失误
+            return
 
         if self.board.can_fly(r, c):
             self._launch_arrow(r, c)
         else:
             self._block_arrow(r, c)
 
+    def _handle_playing_motion(self, event):
+        if event.type != pygame.MOUSEMOTION:
+            return
+        if self.flying or self.blocked:
+            self.hover_cell = None
+        else:
+            self.hover_cell = self._cell_at(event.pos)
+
     def _launch_arrow(self, r, c):
-        """箭头无阻挡：创建飞出动画并从网格删除。"""
         direction = self.board.get_direction(r, c)
-        center = self._cell_rect(r, c).center
         self.flying.append(
-            FlyingArrow(center, direction, int(CELL_SIZE * 0.6))
+            FlyingArrow(self._cell_rect(r, c).center, direction, ARROW_SIZE)
         )
         self.board.remove_arrow(r, c)
+        self.hover_cell = None
 
     def _block_arrow(self, r, c):
-        """箭头被挡：不删除，失误 -1，播放反馈。"""
         self.board.mistakes -= 1
         self.blocked.append(
             BlockedFeedback(r, c, self._cell_rect(r, c),
-                            self.board.get_direction(r, c))
+                            self.board.get_direction(r, c), ARROW_SIZE)
         )
         self.toast_text = "被挡住了！"
         self.toast_timer = TOAST_DURATION
+        self.hover_cell = None
 
     # ---------------- 主循环 ----------------
     def run(self):
@@ -230,6 +242,7 @@ class Game:
             self.start_button.handle_event(event)
         elif self.state == GameState.PLAYING:
             self.restart_button.handle_event(event)
+            self._handle_playing_motion(event)
             self._handle_board_click(event)
         elif self.state == GameState.LEVEL_CLEAR:
             self.next_button.handle_event(event)
@@ -241,32 +254,30 @@ class Game:
             self.home_button_single.handle_event(event)
 
     def _update_animations(self, dt):
-        # 飞出动画
+        board_rect = self._board_rect()
+
         for arrow in self.flying:
-            arrow.update(dt)
+            arrow.update(dt, board_rect)
         self.flying = [a for a in self.flying if not a.dead]
 
-        # 碰撞反馈
         for fb in self.blocked:
             fb.update(dt)
         self.blocked = [fb for fb in self.blocked if not fb.dead]
 
-        # 提示文字倒计时
         if self.toast_timer > 0:
             self.toast_timer = max(0.0, self.toast_timer - dt)
 
-        # 最后一个箭头飞出屏幕后判定通关
+        # 最后一个箭头淡出后判定通关
         if not self.flying and self.board.remaining == 0:
             if self.level_index == len(LEVELS) - 1:
                 self.state = GameState.ALL_CLEAR
             else:
                 self.state = GameState.LEVEL_CLEAR
-        # 失误耗尽且碰撞反馈播完后判定失败（让玩家看到红色反馈）
+        # 失误耗尽且反馈播完后判定失败
         elif self.board.mistakes <= 0 and not self.blocked:
             self.state = GameState.GAME_OVER
 
     def _debug_level_clear(self):
-        """临时调试：模拟本关箭头全部消除。"""
         if self.state != GameState.PLAYING:
             return
         if self.level_index == len(LEVELS) - 1:
@@ -343,14 +354,13 @@ class Game:
         self._draw_text("剩余箭头：%d" % self.board.remaining,
                         self.font_normal, COLOR_TEXT, topleft=(28, 56))
 
-        # 剩余失误：文字 + 圆点（亮色=剩余，暗色=已用掉）
         self._draw_text("剩余失误", self.font_small, COLOR_TEXT_DIM,
                         topleft=(330, 22))
         for i in range(self.board.max_mistakes):
             dot_color = COLOR_DANGER if i < self.board.mistakes else COLOR_GRID_BORDER
             pygame.draw.circle(self.screen, dot_color, (430 + i * 28, 33), 9)
 
-        # 棋盘格子与静止箭头（正在播放碰撞反馈的箭头交给反馈对象绘制）
+        # 棋盘
         blocked_cells = {(fb.r, fb.c) for fb in self.blocked}
         for r in range(self.board.rows):
             for c in range(self.board.cols):
@@ -359,25 +369,45 @@ class Game:
                 pygame.draw.rect(self.screen, cell_color, rect, border_radius=8)
                 pygame.draw.rect(self.screen, COLOR_GRID_BORDER, rect, 1,
                                  border_radius=8)
+
                 direction = self.board.get_direction(r, c)
                 if direction is not None and (r, c) not in blocked_cells:
                     draw_arrow(self.screen, direction, rect.center,
-                               int(CELL_SIZE * 0.6), COLOR_ARROW)
+                               ARROW_SIZE, COLOR_ARROW)
 
-        # 碰撞反馈（红色晃动箭头）
+                # 悬停高亮
+                if (self.hover_cell == (r, c) and direction is not None
+                        and (r, c) not in blocked_cells):
+                    pygame.draw.rect(self.screen, COLOR_ACCENT, rect, 3,
+                                     border_radius=8)
+
+        # 碰撞反馈
         for fb in self.blocked:
             fb.draw(self.screen)
 
-        # 飞出中的箭头（最上层）
+        # 飞出中的箭
         for arrow in self.flying:
             arrow.draw(self.screen)
 
-        # “被挡住了！”提示
+        # “被挡住了！”提示：淡入、上浮、淡出
         if self.toast_timer > 0:
-            self._draw_text(self.toast_text, self.font_normal, COLOR_DANGER,
-                            center=(WINDOW_WIDTH // 2, self.board_y - 14))
+            remain = self.toast_timer
+            fade_in, fade_out = 0.15, 0.30
+            if remain > TOAST_DURATION - fade_in:
+                ratio = (TOAST_DURATION - remain) / fade_in
+            elif remain < fade_out:
+                ratio = remain / fade_out
+            else:
+                ratio = 1.0
+            toast_img = self.font_normal.render(self.toast_text, True,
+                                                COLOR_DANGER)
+            toast_img.set_alpha(int(255 * ratio))
+            rise = (TOAST_DURATION - remain) * 14
+            rect = toast_img.get_rect(
+                center=(WINDOW_WIDTH // 2, int(self.board_y - 14 - rise))
+            )
+            self.screen.blit(toast_img, rect)
 
-        # 右上角重新开始按钮
         self.restart_button.draw(self.screen)
 
         # 底部调试提示（阶段 8 删除）
@@ -386,7 +416,6 @@ class Game:
                         center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT - 28))
 
     def _draw_overlay(self, title, title_color, buttons, hint):
-        """在游戏画面上覆盖半透明结果面板。"""
         veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         veil.fill((0, 0, 0, 160))
         self.screen.blit(veil, (0, 0))
