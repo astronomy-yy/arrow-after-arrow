@@ -5,9 +5,16 @@
     python tools/generate_levels.py            # 全部重新生成
     python tools/generate_levels.py 3          # 只重新生成第 3 关
     python tools/generate_levels.py --check    # 只校验现有 level.py
+    python tools/generate_levels.py --stats    # 打印现有 12 关的难度表
 
-生成出来的每一关都做过完整模拟校验：按 solution 顺序点击，每一步
-箭头都必须真的能飞出去。
+生成出来的每一关都要过三道检查：
+1. 按 solution 顺序点击，每一步箭头都真的能飞出去；
+2. 用 game/solver.py 的拓扑排序独立解一遍，确认 AI 求解器也解得开；
+3. 开局「能直接飞出去的箭」占比不超过该关上限定值（保证有阻挡、要动脑）。
+
+难度靠 PLAN 里的 ray_pref / max_free 两点控制，从第 1 关到第 12 关
+单调变难：第 1 关约七成的箭开局就能飞（给新手留够容错），第 12 关只剩
+一成左右（开局只有 2 支能直接点，其余全被别的箭压住）。
 """
 
 import os
@@ -17,23 +24,25 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from game.generator import build_level, difficulty, fill_ratio  # noqa: E402
+from game import generator as G                                 # noqa: E402
+from game.board import Board                                    # noqa: E402
 from game.shapes import cells_of, is_connected                  # noqa: E402
+from game.solver import solve                                   # noqa: E402
 
-# (名字, 形状, 行, 列, 种子, 时限秒)
+# (名字, 形状, 行, 列, 种子, 时限秒, ray_pref, 开局可飞上限)
 PLAN = [
-    ("第1关 初露锋芒", "rect", 12, 9, 1101021, 240),
-    ("第2关 渐入佳境", "rect", 13, 10, 2202024, 260),
-    ("第3关 圆转如意", "round", 11, 11, 3303008, 240),
-    ("第4关 菱光乍现", "diamond", 13, 13, 4404016, 260),
-    ("第5关 十字路口", "cross", 13, 13, 5505032, 260),
-    ("第6关 心之所向", "heart", 13, 13, 6606048, 260),
-    ("第7关 长街深巷", "rect", 15, 11, 7707056, 300),
-    ("第8关 步步登高", "triangle", 12, 13, 8808064, 280),
-    ("第9关 大盘如月", "round", 15, 15, 9909072, 320),
-    ("第10关 沙漏流转", "hourglass", 14, 12, 11101088, 300),
-    ("第11关 环环相扣", "ring", 15, 15, 12121104, 320),
-    ("第12关 满盘皆兵", "rect", 18, 13, 13131200, 360),
+    ("第1关 初露锋芒", "rect", 12, 9, 1101021, 240, 0.35, 0.78),
+    ("第2关 渐入佳境", "rect", 13, 10, 2202024, 260, 0.50, 0.65),
+    ("第3关 圆转如意", "round", 11, 11, 3303008, 240, 0.58, 0.56),
+    ("第4关 菱光乍现", "diamond", 13, 13, 4404016, 260, 0.64, 0.50),
+    ("第5关 十字路口", "cross", 13, 13, 5505032, 260, 0.70, 0.46),
+    ("第6关 心之所向", "heart", 13, 13, 6606048, 260, 0.76, 0.42),
+    ("第7关 长街深巷", "rect", 15, 11, 7707056, 300, 0.82, 0.38),
+    ("第8关 步步登高", "triangle", 12, 13, 8808064, 280, 0.88, 0.34),
+    ("第9关 大盘如月", "round", 15, 15, 9909072, 320, 0.92, 0.30),
+    ("第10关 沙漏流转", "hourglass", 14, 12, 11101088, 300, 0.96, 0.27),
+    ("第11关 环环相扣", "ring", 15, 15, 12121104, 320, 0.98, 0.24),
+    ("第12关 满盘皆兵", "rect", 18, 13, 13131200, 360, 1.00, 0.20),
 ]
 
 HEADER = '''"""关卡数据（由 tools/generate_levels.py 用「逆向构造法」生成）。
@@ -53,25 +62,42 @@ HEADER = '''"""关卡数据（由 tools/generate_levels.py 用「逆向构造法
 - solution：一条已验证的通关顺序（箭 id 列表，id 即 arrows 列表下标）。
   它是生成时「放箭顺序」的倒序：最后放进去的箭最先点。
 
+关卡是**有阻挡**的：一支箭的箭头常常正对着另一支箭的身体，必须先把
+挡路的那支点掉。所以 solution 只是其中一条合法顺序，不是唯一解。
+难度从第 1 关到第 12 关递增：开局能直接飞出去的箭，从第 1 关的约七成
+递减到第 12 关的一成左右。
+
 重新生成：python tools/generate_levels.py
+难度表：  python tools/generate_levels.py --stats
 """
 
 '''
 
 
 def build_one(index):
-    name, shape, rows, cols, seed, limit = PLAN[index]
+    name, shape, rows, cols, seed, limit, ray_pref, max_free = PLAN[index]
     t0 = time.time()
-    # 大造型的填充率方差大，靠多随机重启挑最满的一版（一关也就几百毫秒）
-    level = build_level(rows, cols, shape, seed, name=name,
-                        mistakes=3, time_limit=limit, max_attempts=200)
+    style = dict(G.DEFAULT_STYLE, ray_pref=ray_pref)
+    # 大造型的方差大，靠多随机重启挑「满足难度约束又最满」的一版
+    level = G.build_level(rows, cols, shape, seed, name=name, mistakes=3,
+                          time_limit=limit, max_attempts=240,
+                          style=style, max_free=max_free)
     if level is None:
         raise SystemExit(f"第 {index + 1} 关生成失败：{shape} {rows}x{cols}")
     level["id"] = index + 1
+
+    stats = G.board_stats(level)
+    order = solve(Board(level))
+    if order is None:
+        raise SystemExit(f"第 {index + 1} 关求解器解不开，已丢弃")
+
     print(f"  {name:12s} {shape:10s} {rows:2d}x{cols:2d} "
-          f"箭数={len(level['arrows']):3d} "
-          f"填充率={fill_ratio(level):.2f} "
-          f"难度={difficulty(level):5.1f} 耗时={time.time() - t0:.1f}s")
+          f"箭数={stats['arrows']:3d} "
+          f"填充率={G.fill_ratio(level):.3f} "
+          f"开局可飞={stats['free']:2d}({stats['free_ratio']:.0%}) "
+          f"被挡={stats['blocked_ratio']:.0%} "
+          f"平均挡者={stats['avg_blockers']:.2f} "
+          f"难度={G.difficulty(level):5.1f} 耗时={time.time() - t0:.1f}s")
     return level
 
 
@@ -110,14 +136,38 @@ def dump(levels, path):
     print(f"已写入 {path}（{len(text)} 字节，{len(levels)} 关）")
 
 
-def check(levels):
-    """只读校验：形状连通、solution 全程可飞。"""
-    from game.board import Board
+def stats_table(levels):
+    """打印难度表（生成脚本 --stats 与文档记录都用它）。"""
+    print(f"{'关卡':<14}{'形状':<10}{'箭数':>4}{'填充率':>8}"
+          f"{'开局可飞':>10}{'被挡':>8}{'平均挡者':>10}{'难度':>8}")
+    rows = []
+    for level in levels:
+        stats = G.board_stats(level)
+        fill = G.fill_ratio(level)
+        rows.append((level["name"], level.get("shape", "?"), stats, fill))
+        print(f"{level['name']:<14}{level.get('shape', '?'):<10}"
+              f"{stats['arrows']:>4}{fill:>8.3f}"
+              f"{stats['free']:>4}({stats['free_ratio']:.0%})"
+              f"{stats['blocked_ratio']:>8.0%}"
+              f"{stats['avg_blockers']:>10.2f}"
+              f"{G.difficulty(level):>8.1f}")
+    n = len(rows)
+    print(f"{'平均':<14}{'':<10}"
+          f"{sum(r[2]['arrows'] for r in rows) / n:>4.1f}"
+          f"{sum(r[3] for r in rows) / n:>8.3f}"
+          f"{sum(r[2]['free_ratio'] for r in rows) / n:>9.0%}"
+          f"{sum(r[2]['blocked_ratio'] for r in rows) / n:>8.0%}"
+          f"{sum(r[2]['avg_blockers'] for r in rows) / n:>10.2f}")
+    return rows
 
+
+def check(levels):
+    """只读校验：形状连通、solution 全程可飞、求解器解得开、确实有阻挡。"""
     ok = True
     for index, level in enumerate(levels):
         mask = cells_of(level["rows"], level["cols"], level.get("shape", "rect"))
         connected = is_connected(mask)
+
         board = Board(level)
         by_id = {arrow.id: arrow for arrow in board.arrows}
         solution_ok = True
@@ -128,24 +178,35 @@ def check(levels):
                 break
             board.remove_arrow(arrow)
         solution_ok = solution_ok and board.remaining == 0
-        flag = "OK " if (connected and solution_ok) else "BAD"
-        print(f"  [{flag}] 第{index + 1}关 {level['name']:12s} "
-              f"形状连通={connected} solution可通关={solution_ok} "
-              f"箭数={len(level['arrows'])}")
-        ok = ok and connected and solution_ok
+
+        solver_ok = solve(Board(level)) is not None
+        stats = G.board_stats(level)
+        blocked_ok = stats["blocked_ratio"] >= 0.25
+
+        flag = "OK " if (connected and solution_ok and solver_ok
+                         and blocked_ok) else "BAD"
+        print(f"  [{flag}] {level['name']:12s} "
+              f"连通={connected} solution={solution_ok} 求解器={solver_ok} "
+              f"箭数={stats['arrows']:>3} 被挡={stats['blocked_ratio']:.0%} "
+              f"开局可飞={stats['free']:>2}/{stats['arrows']}")
+        ok = ok and connected and solution_ok and solver_ok and blocked_ok
     return ok
 
 
 def main():
     args = sys.argv[1:]
     target = os.path.join(ROOT, "game", "level.py")
-    if target not in sys.path:
-        pass
 
     if "--check" in args:
         from game.level import LEVELS
         print("校验 game/level.py：")
         raise SystemExit(0 if check(LEVELS) else 1)
+
+    if "--stats" in args:
+        from game.level import LEVELS
+        print("game/level.py 的难度表：")
+        stats_table(LEVELS)
+        raise SystemExit(0)
 
     if args and args[0].isdigit():
         only = int(args[0]) - 1
@@ -158,8 +219,12 @@ def main():
         levels = [build_one(i) for i in range(len(PLAN))]
 
     dump(levels, target)
-    print("校验新生成的关卡：")
-    check(levels)
+    print("\n难度表：")
+    stats_table(levels)
+    print("\n校验新生成的关卡：")
+    ok = check(levels)
+    print("全部通过" if ok else "存在问题")
+    raise SystemExit(0 if ok else 1)
 
 
 if __name__ == "__main__":

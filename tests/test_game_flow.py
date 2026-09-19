@@ -111,17 +111,23 @@ def test_wrong_click_costs_a_heart(game):
     assert game.board.wrong_ids == set()
 
 
-def test_generated_level_has_no_free_lunch_before_moving(game):
-    """逆向构造保证：开局每支箭的射线都是空的 —— 点错只会发生在动过之后。
+def test_generated_level_has_blocked_arrows(game):
+    """正式关卡必须有阻挡：开局既要有能点的，也要有被压住点不动的。
 
-    这条不是「设计目标」，而是生成算法的副产品，顺手锁住它，
-    免得以后改生成器时悄悄破坏了可解性。
+    这里以前断言的是「开局每支箭都能飞」，那其实是生成器多了一条多余
+    约束造成的 bug —— 全盘都能飞等于无脑乱点必通关，已经修掉。
     """
     game.start_game()
-    assert all(game.board.can_fly_arrow(a) for a in game.board.arrows)
+    board = game.board
+    free = board.flyable_arrows()
+    assert 0 < len(free) < board.total, "开局必须有能点的，也必须有点不动的"
+    blocked = [a for a in board.arrows if not board.can_fly_arrow(a)]
+    assert blocked, "关卡里应当有被别的箭压住的箭"
+
+    # 提示与 AI 求解在真实难度的盘面上也要给出合法的一步
     assert game.use_hint() is True
     assert game.auto_solve() is True
-    assert game.auto_queue[0] in game.levels[0]["solution"]
+    assert game.auto_queue[0] in {a.id for a in board.flyable_arrows()}
     assert game.board.remaining == game.board.total
 
 
