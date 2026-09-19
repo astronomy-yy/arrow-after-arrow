@@ -41,6 +41,8 @@ from game.settings import (
     MAX_CELL_SIZE,
     MIN_WINDOW_H,
     MIN_WINDOW_W,
+    SCREEN_RESERVE_H,
+    SCREEN_RESERVE_W,
     SKIP_COST,
     TITLE,
     TOP_BAR_HEIGHT,
@@ -67,6 +69,45 @@ AUTO_STEP_INTERVAL = 0.30       # AI 自动求解时每隔多久点一支箭
 STAR_TABLE = {0: 3, 1: 2, 2: 2}
 
 
+def desktop_size():
+    """pygame 眼里的桌面尺寸，拿不到时返回 None。
+
+    注意进程不是 DPI 感知的，在缩放 200% 的屏幕上这里拿到的是**逻辑**尺寸
+    （比如 2880x1800 的屏只报 1440x900）。无窗口的 dummy 驱动会谎报
+    1024x768，所以直接返回 None，让调用方走默认值。
+    """
+    try:
+        if pygame.display.get_driver() == "dummy":
+            return None
+        sizes = pygame.display.get_desktop_sizes()
+    except pygame.error:                      # pragma: no cover - 极端环境
+        return None
+    if not sizes:
+        return None
+    width, height = sizes[0]
+    if width < 320 or height < 240:           # 明显是假数据
+        return None
+    return width, height
+
+
+def usable_window_cap(size):
+    """窗口尺寸的上限：桌面尺寸减去标题栏 / 任务栏的余量。"""
+    width, height = size
+    return max(200, width - SCREEN_RESERVE_W), max(200, height - SCREEN_RESERVE_H)
+
+
+def fit_to_screen(width, height, size):
+    """把期望的窗口尺寸等比收敛到屏幕放得下，只缩小不放大。
+
+    窗口一旦高过桌面，Windows 会把它垂直居中，标题栏跑到屏幕上方、底边跑到
+    屏幕下方，用户既抓不到边框缩放、也抓不到标题栏拖动 —— 这正是「窗口无法
+    调整大小、也拖不动」的成因。
+    """
+    cap_w, cap_h = usable_window_cap(size)
+    scale = min(1.0, cap_w / width, cap_h / height)
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 class HudInfo:
     """交给 Hud 绘制的一组只读数据。"""
 
@@ -86,9 +127,19 @@ class Game:
 
     def __init__(self, save_path=None):
         pygame.init()
-        self.screen = pygame.display.set_mode(
-            (DEFAULT_WINDOW_W, DEFAULT_WINDOW_H), pygame.RESIZABLE
-        )
+        # 窗口必须先收敛到屏幕放得下：最小尺寸也要跟着收敛，
+        # 否则「最小尺寸」本身就能把边框顶到屏幕外。
+        desktop = desktop_size()
+        if desktop is None:
+            self.min_window = (MIN_WINDOW_W, MIN_WINDOW_H)
+            start_size = (DEFAULT_WINDOW_W, DEFAULT_WINDOW_H)
+        else:
+            cap_w, cap_h = usable_window_cap(desktop)
+            self.min_window = (min(MIN_WINDOW_W, cap_w),
+                               min(MIN_WINDOW_H, cap_h))
+            start_size = fit_to_screen(DEFAULT_WINDOW_W, DEFAULT_WINDOW_H,
+                                       desktop)
+        self.screen = pygame.display.set_mode(start_size, pygame.RESIZABLE)
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
 
@@ -189,16 +240,28 @@ class Game:
 
     # ---------------- 窗口缩放 ----------------
     def _update_view(self):
+        # SDL2 在窗口尺寸变化时会自动换掉 display surface，手上这份引用
+        # 可能已经不是最新的，取一次为准。
+        self.screen = pygame.display.get_surface() or self.screen
         win_w, win_h = self.screen.get_size()
         self.view_scale = min(win_w / WINDOW_WIDTH, win_h / WINDOW_HEIGHT)
-        vw = int(WINDOW_WIDTH * self.view_scale)
-        vh = int(WINDOW_HEIGHT * self.view_scale)
+        vw = max(1, int(WINDOW_WIDTH * self.view_scale))
+        vh = max(1, int(WINDOW_HEIGHT * self.view_scale))
         self.view_rect = pygame.Rect((win_w - vw) // 2, (win_h - vh) // 2,
                                      vw, vh)
 
     def _resize(self, w, h):
-        self.screen = pygame.display.set_mode(
-            (max(w, MIN_WINDOW_W), max(h, MIN_WINDOW_H)), pygame.RESIZABLE)
+        """窗口尺寸变了：重算视图。
+
+        真实窗口下 SDL2 会把 display surface 自动换成新尺寸，所以这里通常
+        一次 set_mode 都不用调 —— 关键是别在拖拽过程中反复重建窗口，否则会
+        打断 Windows 的模态拖拽循环，表现就是「窗口拖不动」。
+        不自动换 surface 的环境（dummy 驱动）才需要补一次。
+        """
+        min_w, min_h = self.min_window
+        w, h = max(w, min_w), max(h, min_h)
+        if self.screen.get_size() != (w, h):
+            self.screen = pygame.display.set_mode((w, h), pygame.RESIZABLE)
         self._update_view()
 
     def _to_world(self, pos):

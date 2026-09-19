@@ -35,6 +35,7 @@ python main.py
 | 底部金币 | 花 1 金币点亮「现在该点哪一支」 |
 | 底部滑杆与放大镜 | 缩放棋盘 |
 | 底部 `#` | 辅助线点阵开关 |
+| 拖拽窗口边框 | 整幅画面等比缩放（窗口尺寸、棋盘几何都跟着变） |
 | 快捷键 | `U` 撤销 · `H` 提示 · `A` AI 自动求解 · `G` 辅助线 · `N` 随机关卡 · `Esc` 菜单与返回 |
 
 ## 玩法与关卡
@@ -70,10 +71,10 @@ arrow-after-arrow/
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
 │   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
-├── tests/                     # pytest：路径检测 / 生成器 / 求解器 / 存档 / 端到端
+├── tests/                     # pytest：路径 / 生成器 / 求解器 / 存档 / 窗口 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局
-│   └── test-record.md         # T01–T06 测试记录
+│   └── test-record.md         # T01–T07 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -83,7 +84,7 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 63 个用例，无窗口运行
+python -m pytest -q                    # 75 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成 12 关
 python tools/generate_levels.py --check  # 只校验现有 level.py 是否关关可通
 python tools/screenshot.py             # 重新导出 README 用的截图

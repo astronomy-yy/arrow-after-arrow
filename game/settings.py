@@ -13,6 +13,12 @@ DEFAULT_WINDOW_H = 1000
 MIN_WINDOW_W = 420
 MIN_WINDOW_H = 680
 
+# 窗口别贴满屏幕：按下述余量收敛，给标题栏 / 任务栏留位置。
+# 窗口一旦高过桌面，Windows 会把它垂直居中，标题栏和底边双双跑到屏幕外，
+# 用户就既抓不到边框缩放、也抓不到标题栏拖动。
+SCREEN_RESERVE_W = 120
+SCREEN_RESERVE_H = 140
+
 FPS = 60
 TITLE = "一箭又一箭"
 
