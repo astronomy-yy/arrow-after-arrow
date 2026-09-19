@@ -42,10 +42,14 @@ python main.py
 
 - **12 个主线关卡**，造型依次为方形、圆形、菱形、十字、心形、三角、沙漏、圆环等。
 - 关卡不是手摆的，而是由 `game/generator.py` 用**逆向构造法**批量生成，
-  每一关都跑过完整模拟校验，保证「存在一条点击顺序能全部清空」。
-- 盘面填充率普遍在 **0.92 ~ 1.00**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的飞行通道）。
+  每一关都要过两道独立校验：按生成顺序模拟点一遍，再用求解器独立解一遍。
+- **关卡是互相阻挡的**：一支箭的箭头常常直接顶在另一支箭的身体上，必须先清掉
+  挡路的那支。难度逐关递增 —— 开局能直接点掉的箭从第 1 关的 67% 降到第 12 关
+  的 11%（19 支箭里只有 2 支能直接点）。
+- 盘面填充率普遍在 **0.94 ~ 1.00**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的飞行通道）。
 - **随机关卡**：按 `N` 或从菜单点「随机关卡」，用同一套生成器现场生成一关，不写入存档进度。
-- **AI 求解**：`game/solver.py` 是带记忆化的 DFS，既能给出下一步提示（H），也能自动替你通关（A）。
+- **AI 求解**：`game/solver.py` 把「谁挡谁」建成有向图做**拓扑排序**，O(n²) 精确判定，
+  既能给出下一步提示（H），也能自动替你通关（A）；图里有环才判为无解。
 
 ## 项目结构
 
@@ -57,10 +61,10 @@ arrow-after-arrow/
 │   ├── theme.py               # 日间 / 夜间两套界面配色 + 箭头配色解析
 │   ├── arrow.py               # 方向枚举、线段宽度、圆角折线与箭头绘制
 │   ├── shapes.py              # 关卡造型遮罩：矩/圆/菱/心/三角/十字/沙漏/环
-│   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验
+│   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验 + 阻挡难度旋钮
 │   ├── level.py               # 12 关关卡数据（由 tools/generate_levels.py 生成）
 │   ├── board.py               # 棋盘：占据网格、射线检测、撤销、重置
-│   ├── solver.py              # DFS 求解器：提示 / 自动通关共用
+│   ├── solver.py              # 拓扑排序求解器：提示 / 自动通关共用
 │   ├── animations.py          # 飞出滑行、残影、弹回摆动、提示呼吸
 │   ├── hud.py                 # 顶栏 / 底栏控件
 │   ├── icons.py               # 全部图标都是代码画的矢量图，无图片素材
@@ -71,10 +75,10 @@ arrow-after-arrow/
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
 │   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
-├── tests/                     # pytest：路径 / 生成器 / 求解器 / 存档 / 窗口 / 端到端
+├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局
-│   └── test-record.md         # T01–T07 测试记录
+│   └── test-record.md         # T01–T08 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -84,9 +88,10 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 75 个用例，无窗口运行
+python -m pytest -q                    # 104 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成 12 关
-python tools/generate_levels.py --check  # 只校验现有 level.py 是否关关可通
+python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
+python tools/generate_levels.py --stats  # 打印 12 关的难度表
 python tools/screenshot.py             # 重新导出 README 用的截图
 ```
 
