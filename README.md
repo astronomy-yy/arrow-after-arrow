@@ -1,6 +1,9 @@
 # 一箭又一箭（Arrow After Arrow）
 
-一个用 Python + Pygame 实现的益智小游戏。点击棋盘上的箭头：若箭头飞行方向上没有其他箭头阻挡，箭头飞出并消失；若被挡住则失误一次。消除棋盘上全部箭头即可通关，失误耗尽则失败。
+一个用 Python + Pygame 手写实现的益智小游戏，界面与玩法对齐微信小游戏《一箭又一箭》：
+棋盘被裁成一个造型（圆 / 菱形 / 心 / 沙漏……），里面密密麻麻塞满彩色的**折线箭**。
+点击一条线段，它会沿自己的折线轨迹滑出棋盘、再顺箭头方向飞出屏幕；如果箭头前方被
+别的线段挡住，则被弹回、扣一颗红心。清空全部线段即通关，红心耗尽或倒计时归零则失败。
 
 ## 开发环境
 
@@ -9,46 +12,93 @@
 - pygame-ce 2.5.x（导入名仍为 `pygame`，API 与 pygame 2.x 兼容）
 - pytest 9.x（单元测试）
 
-> 说明：Python 3.14 上官方 pygame 暂无预编译安装包，直接 `pip install pygame` 会尝试本地源码编译并报错（`No module named 'setuptools._distutils.msvccompiler'`），因此本项目使用社区版 **pygame-ce**，安装包名不同但代码里照常 `import pygame`。
+> 说明：Python 3.14 上官方 pygame 暂无预编译安装包，直接 `pip install pygame` 会尝试本地源码
+> 编译并报错（`No module named 'setuptools._distutils.msvccompiler'`），因此本项目使用社区版
+> **pygame-ce**，安装包名不同但代码里照常 `import pygame`。
 
-## 安装方法
+## 安装与运行
 
 ```bash
 pip install -r requirements.txt
-```
-
-## 运行方法
-
-```bash
 python main.py
 ```
 
 ## 操作说明
 
-- 鼠标点击棋盘上的箭头，让它沿自身方向飞出
-- 方向上无其他箭头：飞出并消失，剩余箭头数 -1
-- 方向上有其他箭头：被挡住不消失，剩余失误次数 -1，并给出晃动/变红反馈
-- 消除全部箭头：通关，进入下一关
-- 失误次数耗尽：本关失败，可重新开始
-- 游戏中可随时点击"重新开始"按钮恢复本关初始布局
+| 操作 | 效果 |
+|---|---|
+| 左键点击线段 | 能飞出则整条滑出并消失；被挡住则弹回并扣一颗红心 |
+| 左键点击空格 | 无惩罚 |
+| 顶部齿轮 | 打开设置（音效、重置进度） |
+| 顶部拨杆 | 日间 / 夜间主题切换，立即生效并存档 |
+| 顶部手柄 / `⋯` / 靶心 | 跳过关卡（3 金币）/ 游戏菜单 / 关卡选择 |
+| 底部金币 | 花 1 金币点亮「现在该点哪一支」 |
+| 底部滑杆与放大镜 | 缩放棋盘 |
+| 底部 `#` | 辅助线点阵开关 |
+| 快捷键 | `U` 撤销 · `H` 提示 · `A` AI 自动求解 · `G` 辅助线 · `N` 随机关卡 · `Esc` 菜单与返回 |
+
+## 玩法与关卡
+
+- **12 个主线关卡**，造型依次为方形、圆形、菱形、十字、心形、三角、沙漏、圆环等。
+- 关卡不是手摆的，而是由 `game/generator.py` 用**逆向构造法**批量生成，
+  每一关都跑过完整模拟校验，保证「存在一条点击顺序能全部清空」。
+- 盘面填充率普遍在 **0.92 ~ 1.00**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的飞行通道）。
+- **随机关卡**：按 `N` 或从菜单点「随机关卡」，用同一套生成器现场生成一关，不写入存档进度。
+- **AI 求解**：`game/solver.py` 是带记忆化的 DFS，既能给出下一步提示（H），也能自动替你通关（A）。
 
 ## 项目结构
 
 ```text
 arrow-after-arrow/
-├── main.py              # 游戏入口
+├── main.py                    # 游戏入口：主循环、状态机、输入、绘制
 ├── game/
-│   ├── settings.py      # 全局配置（窗口、颜色、布局）
-│   ├── arrow.py         # 方向枚举与箭头实体
-│   ├── level.py         # 关卡数据
-│   ├── board.py         # 棋盘与路径检测
-│   └── states.py        # 游戏状态机
-├── assets/screenshots/  # 游戏截图
-├── tests/test_path.py   # 路径检测单元测试
+│   ├── settings.py            # 全局配置：窗口尺寸、布局、线宽、两套箭头调色板
+│   ├── theme.py               # 日间 / 夜间两套界面配色 + 箭头配色解析
+│   ├── arrow.py               # 方向枚举、线段宽度、圆角折线与箭头绘制
+│   ├── shapes.py              # 关卡造型遮罩：矩/圆/菱/心/三角/十字/沙漏/环
+│   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验
+│   ├── level.py               # 12 关关卡数据（由 tools/generate_levels.py 生成）
+│   ├── board.py               # 棋盘：占据网格、射线检测、撤销、重置
+│   ├── solver.py              # DFS 求解器：提示 / 自动通关共用
+│   ├── animations.py          # 飞出滑行、残影、弹回摆动、提示呼吸
+│   ├── hud.py                 # 顶栏 / 底栏控件
+│   ├── icons.py               # 全部图标都是代码画的矢量图，无图片素材
+│   ├── ui.py                  # 按钮、图标按钮、日夜拨杆、滑杆、菜单面板
+│   ├── audio.py               # 程序合成音效（不依赖任何音频素材）
+│   ├── storage.py             # JSON 存档：进度、星级、金币、设置
+│   └── states.py              # 游戏状态枚举
+├── tools/
+│   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
+│   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
+├── tests/                     # pytest：路径检测 / 生成器 / 求解器 / 存档 / 端到端
+├── docs/
+│   ├── design.md              # 设计说明：数据结构、算法、界面布局
+│   └── test-record.md         # T01–T06 测试记录
+├── assets/screenshots/        # 游戏截图
+├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
 └── .gitignore
 ```
 
+## 测试与工具
+
+```bash
+python -m pytest -q                    # 63 个用例，无窗口运行
+python tools/generate_levels.py        # 重新生成 12 关
+python tools/generate_levels.py --check  # 只校验现有 level.py 是否关关可通
+python tools/screenshot.py             # 重新导出 README 用的截图
+```
+
 ## 游戏截图
 
-（阶段 7 界面完成后补充：开始界面 / 游戏界面 / 通关界面 / 失败界面）
+| 开始界面 | 关卡选择 |
+|---|---|
+| ![开始](assets/screenshots/start.png) | ![选关](assets/screenshots/level_select.png) |
+
+| 夜间关卡 | 日间关卡 |
+|---|---|
+| ![夜间](assets/screenshots/playing_level9.png) | ![日间](assets/screenshots/playing_day.png) |
+
+| 大关铺满 | 通关结算 |
+|---|---|
+| ![第12关](assets/screenshots/playing_level12.png) | ![通关](assets/screenshots/level_clear.png) |
