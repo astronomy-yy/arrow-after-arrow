@@ -10,14 +10,13 @@
 
 import math
 
-import pygame
-
-from game.arrow import draw_arrow_head, lighten
+from game.arrow import blit_disc, draw_arrow_head, lighten, stroke_polyline
 from game import theme
 from game.settings import WRONG_FLASH
 
 FLY_SPEED = 26.0        # 沿线流动速度，单位：节（格）/秒
 TRAIL_LIFE = 0.5        # 残影格点停留时间
+TRAIL_FADE_IN = 0.09    # 残影淡入时长（不然是「啪」地蹦出来）
 PUSH_STEPS = 0.55       # 被挡时沿轨迹前冲的节数
 FADE_CELLS = 2.6        # 出界后多少格距离内淡到看不见
 TOAST_DURATION = 1.0    # 底部提示文字停留时长
@@ -37,6 +36,28 @@ def point_at(route, s):
     return (x1 + (x2 - x1) * frac, y1 + (y2 - y1) * frac)
 
 
+def flow_points(route, n_cells, offset):
+    """取 route 上弧长区间 [offset, offset + n_cells - 1] 的那一段折线。
+
+    只按 s = offset, offset+1, offset+2 … 取点的话，落在两个采样点之间的
+    拐角会被这两点连成的一条斜弦「削平」：画出来是一个斜角，而且随着
+    offset 滑动，这个斜角每前进一格就削平一次、复原一次（FLY_SPEED 下
+    每秒 26 次）—— 转弯处一闪一闪的抖动就是这么来的。把区间里的整数
+    节点补回来，画出来的才是原折线真正的一段。
+    """
+    start = max(0.0, offset)
+    end = start + max(0, n_cells - 1)
+
+    points = [point_at(route, start)]
+    first = int(math.floor(start)) + 1
+    last = min(int(math.ceil(end)) - 1, len(route) - 1)
+    for index in range(max(1, first), last + 1):
+        if start < index < end:
+            points.append(route[index])
+    points.append(point_at(route, end))
+    return points
+
+
 def fade_color(color, ratio):
     """按比例把线段颜色混向背景色，得到「淡出」效果。"""
     bg = theme.get().bg
@@ -44,14 +65,18 @@ def fade_color(color, ratio):
     return tuple(int(color[i] + (bg[i] - color[i]) * ratio) for i in range(3))
 
 
+def trail_alpha(age):
+    """残影亮度：快速淡入、再线性淡出（直接给满亮度会「闪」一下）。"""
+    if age <= 0.0 or age >= TRAIL_LIFE:
+        return 0
+    fade_in = min(1.0, age / TRAIL_FADE_IN)
+    return int(150 * fade_in * (1.0 - age / TRAIL_LIFE))
+
+
 def draw_flowing(surface, route, n_cells, offset, direction, color, width):
-    """把 n_cells 个节沿 route 向前推进 offset 格后画出（圆角折线 + 箭头）。"""
-    points = [point_at(route, i + offset) for i in range(n_cells)]
-    if len(points) >= 2:
-        pygame.draw.lines(surface, color, False, points, width)
-    for point in points:
-        pygame.draw.circle(surface, color, (int(point[0]), int(point[1])),
-                           width // 2)
+    """把整条线段沿 route 向前推进 offset 格后画出（圆角折线 + 箭头）。"""
+    points = flow_points(route, n_cells, offset)
+    stroke_polyline(surface, points, color, width)
     draw_arrow_head(surface, direction, points[-1], int(width * 1.85), color)
 
 
@@ -85,15 +110,10 @@ class FlyingSegment:
     def draw(self, surface):
         trail_color = theme.get().trail
         radius = max(2, int(self.width * 0.22))
-        size = radius * 2 + 4
         for index, pos in enumerate(self.trail_points):
-            age = self.t - index
-            if 0.0 < age < TRAIL_LIFE:
-                alpha = int(150 * (1 - age / TRAIL_LIFE))
-                dot = pygame.Surface((size, size), pygame.SRCALPHA)
-                pygame.draw.circle(dot, (*trail_color, alpha),
-                                   (size // 2, size // 2), radius)
-                surface.blit(dot, (pos[0] - size // 2, pos[1] - size // 2))
+            alpha = trail_alpha(self.t - index)
+            if alpha > 0:
+                blit_disc(surface, pos, radius, trail_color, alpha)
 
         color = fade_color(self.color, self.escaped / FADE_CELLS)
         draw_flowing(surface, self.route, self.n, self.t,

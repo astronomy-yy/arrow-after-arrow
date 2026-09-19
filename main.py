@@ -71,6 +71,7 @@ ZOOM_STEP = 0.08            # 滚轮 / 方向键一次缩放多少（滑杆值�
 PAN_STEP = 26               # 方向键一次平移多少逻辑像素
 DRAG_THRESHOLD = 8          # 按住后位移超过这么多逻辑像素就算「拖棋盘」而不是「点击」
 AUTO_STEP_INTERVAL = 0.30       # AI 自动求解时每隔多久点一支箭
+MAX_FRAME_DT = 0.05         # 单帧步进上限：卡一下也不让飞行线「瞬移」
 STAR_TABLE = {0: 3, 1: 2, 2: 2}
 
 
@@ -98,7 +99,8 @@ def desktop_size():
 def usable_window_cap(size):
     """窗口尺寸的上限：桌面尺寸减去标题栏 / 任务栏的余量。"""
     width, height = size
-    return max(200, width - SCREEN_RESERVE_W), max(200, height - SCREEN_RESERVE_H)
+    return (max(200, width - SCREEN_RESERVE_W),
+            max(200, height - SCREEN_RESERVE_H))
 
 
 def fit_to_screen(width, height, size):
@@ -831,9 +833,18 @@ class Game:
         return route, trail
 
     # ---------------- 主循环 ----------------
+    def _frame_dt(self):
+        """本帧的步进秒数（夹了上限）。
+
+        切窗口 / 系统忙的时候 clock.tick 可能一次返回好几百毫秒，飞行线一步
+        就跨过好几格，看起来像「瞬移」了一下。夹住上限，宁可让动画慢半拍，
+        也不要让它跳。
+        """
+        return min(self.clock.tick(FPS) / 1000.0, MAX_FRAME_DT)
+
     def run(self):
         while True:
-            dt = self.clock.tick(FPS) / 1000.0
+            dt = self._frame_dt()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.quit()
