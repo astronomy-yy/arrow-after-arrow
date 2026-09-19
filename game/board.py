@@ -1,43 +1,55 @@
-"""棋盘：负责关卡网格加载、重置、箭头计数删除与路径检测。"""
+"""棋盘：线段箭的加载、占据网格、路径检测、删除与重置。
+
+线段箭格式见 game/level.py：
+- 每支箭由若干上下左右相邻的格子组成（可拐弯），最后一个格子是箭头端；
+- 棋盘内部用“占据网格”记录每格属于哪支箭；
+- can_fly 沿箭头端方向逐格检查，遇到任何被占据的格子即被挡。
+"""
 
 import copy
 
-from game.arrow import CHAR_TO_DIRECTION, DIRECTION_DELTA, EMPTY
+from game.arrow import CHAR_TO_DIRECTION, DIRECTION_DELTA
+from game.settings import ARROW_PALETTE
+
+
+class Arrow:
+    """一条线段箭。"""
+
+    def __init__(self, arrow_id, data):
+        self.id = arrow_id
+        self.cells = [tuple(cell) for cell in data["cells"]]  # 顺序：尾端 -> 箭头端
+        self.head = self.cells[-1]
+        self.direction = CHAR_TO_DIRECTION[data["dir"]]
+        color_index = data.get("color", arrow_id % len(ARROW_PALETTE))
+        self.color = ARROW_PALETTE[color_index]
 
 
 class Board:
-    """保存一关的棋盘状态。"""
+    """一关的棋盘状态。"""
 
     def __init__(self, level):
-        # 保留关卡原始数据；网格使用深拷贝，避免污染 LEVELS 原始数据
         self._level = level
-        self._initial_grid = copy.deepcopy(level["grid"])
+        self.rows = level.get("rows", 9)
+        self.cols = level.get("cols", 9)
         self._max_mistakes = level["mistakes"]
+        self._initial_arrows = copy.deepcopy(level["arrows"])
         self.reset()
 
     def reset(self):
-        """恢复本关初始布局、剩余箭头数和失误次数。"""
-        self._grid = copy.deepcopy(self._initial_grid)
+        """恢复本关初始布局、剩余箭数和失误次数。"""
         self.mistakes = self._max_mistakes
-        self._remaining = self._count_arrows()
-
-    def _count_arrows(self):
-        """统计当前网格中的箭头总数。"""
-        return sum(cell != EMPTY for row in self._grid for cell in row)
-
-    @property
-    def rows(self):
-        """棋盘行数。"""
-        return len(self._grid)
-
-    @property
-    def cols(self):
-        """棋盘列数。"""
-        return len(self._grid[0])
+        self.arrows = []
+        self._occ = [[None] * self.cols for _ in range(self.rows)]
+        for arrow_id, data in enumerate(self._initial_arrows):
+            arrow = Arrow(arrow_id, data)
+            self.arrows.append(arrow)
+            for (r, c) in arrow.cells:
+                self._occ[r][c] = arrow
+        self._remaining = len(self.arrows)
 
     @property
     def remaining(self):
-        """剩余箭头数。"""
+        """剩余箭的条数。"""
         return self._remaining
 
     @property
@@ -46,46 +58,35 @@ class Board:
         return self._max_mistakes
 
     def in_bounds(self, r, c):
-        """坐标是否在棋盘范围内。"""
+        """坐标是否在棋盘内。"""
         return 0 <= r < self.rows and 0 <= c < self.cols
 
-    def get(self, r, c):
-        """获取某格内容：返回 '.' 或方向字符。"""
-        return self._grid[r][c]
+    def arrow_at(self, r, c):
+        """返回该格上的箭，空格返回 None。"""
+        return self._occ[r][c]
 
-    def get_direction(self, r, c):
-        """获取某格箭头的方向枚举；该格为空时返回 None。"""
-        return CHAR_TO_DIRECTION.get(self._grid[r][c])
-
-    def is_empty(self, r, c):
-        """该格是否为空。"""
-        return self._grid[r][c] == EMPTY
-
-    def remove_arrow(self, r, c):
-        """删除某格箭头并让剩余数 -1；若本来就是空格则忽略。"""
-        if not self.is_empty(r, c):
-            self._grid[r][c] = EMPTY
-            self._remaining -= 1
+    def can_fly_arrow(self, arrow):
+        """判断某支箭沿箭头方向能否无阻挡飞出。"""
+        dr, dc = DIRECTION_DELTA[arrow.direction]
+        r, c = arrow.head
+        r += dr
+        c += dc
+        while self.in_bounds(r, c):
+            if self._occ[r][c] is not None:
+                return False
+            r += dr
+            c += dc
+        return True
 
     def can_fly(self, r, c):
-        """判断 (r, c) 处的箭头沿自身方向能否无阻挡飞出棋盘。
+        """判断某格上的箭能否飞出；空格返回 False。"""
+        arrow = self._occ[r][c]
+        return self.can_fly_arrow(arrow) if arrow is not None else False
 
-        规则：
-        - 从箭头的“下一格”开始，沿方向逐格前进；
-        - 走出边界之前遇到任意箭头 -> 被挡住，返回 False；
-        - 一路走到出界都没有箭头 -> 可以飞出，返回 True；
-        - 对空格调用返回 False。
-        """
-        direction = self.get_direction(r, c)
-        if direction is None:
-            return False
-
-        dr, dc = DIRECTION_DELTA[direction]
-        nr, nc = r + dr, c + dc
-        # 关键：先用 in_bounds 判断再访问网格，从根上杜绝数组越界
-        while self.in_bounds(nr, nc):
-            if not self.is_empty(nr, nc):
-                return False
-            nr += dr
-            nc += dc
-        return True
+    def remove_arrow(self, arrow):
+        """把整支箭从棋盘上移除，剩余条数 -1。"""
+        for (r, c) in arrow.cells:
+            self._occ[r][c] = None
+        if arrow in self.arrows:
+            self.arrows.remove(arrow)
+            self._remaining -= 1
