@@ -27,7 +27,11 @@ python main.py
 
 | 操作 | 效果 |
 |---|---|
-| 左键点击线段 | 能飞出则整条滑出并消失；被挡住则弹回并扣一颗红心 |
+| 左键点击线段 | 能飞出则整条滑出并消失；被挡住则弹回并扣一颗红心（按下后位移不超过 8 像素才算点击） |
+| 左键拖动棋盘 | 放大到超出可视区后，按住棋盘拖动即可平移（按住线段拖也不算点错） |
+| 中键 / 右键拖动 | 任何时候都能拖动棋盘 |
+| 滚轮 | 缩放棋盘，锚在鼠标指的位置上 |
+| 方向键 / `+` `-` / `0` | 平移微调 / 缩放 / 复位视图 |
 | 左键点击空格 | 无惩罚 |
 | 顶部齿轮 | 打开设置（音效、重置进度） |
 | 顶部拨杆 | 日间 / 夜间主题切换，立即生效并存档 |
@@ -37,6 +41,9 @@ python main.py
 | 底部 `#` | 辅助线点阵开关 |
 | 拖拽窗口边框 | 整幅画面等比缩放（窗口尺寸、棋盘几何都跟着变） |
 | 快捷键 | `U` 撤销 · `H` 提示 · `A` AI 自动求解 · `G` 辅助线 · `N` 随机关卡 · `Esc` 菜单与返回 |
+
+> 棋盘只在放大到超出可视区时才拖得动（缩小状态下本来就整块看得见，位置锁在正中）。
+> 拖动被夹在可视区里：最多拖到棋盘边缘与可视区边缘对齐，绝不会把棋盘拖出屏幕找不回来。
 
 ## 玩法与关卡
 
@@ -75,10 +82,10 @@ arrow-after-arrow/
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
 │   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
-├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 端到端
+├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局
-│   └── test-record.md         # T01–T08 测试记录
+│   └── test-record.md         # T01–T09 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -88,7 +95,7 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 104 个用例，无窗口运行
+python -m pytest -q                    # 128 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
@@ -108,3 +115,7 @@ python tools/screenshot.py             # 重新导出 README 用的截图
 | 大关铺满 | 通关结算 |
 |---|---|
 | ![第12关](assets/screenshots/playing_level12.png) | ![通关](assets/screenshots/level_clear.png) |
+
+| 放大后拖到一侧（可见区只剩棋盘的一部分） |
+|---|
+| ![缩放拖动](assets/screenshots/playing_zoom_pan.png) |

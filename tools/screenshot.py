@@ -58,6 +58,18 @@ def main():
         game._compute_geometry()
         shoot(game, name)
 
+    # 放大 + 拖到一侧：验证「缩放 + 平移」联动（可见区只剩棋盘的一部分）
+    game.level_index = 8
+    game.level_number = game.levels[8].get("id", 9)
+    game._load_level(game.levels[8])
+    game.state = GameState.PLAYING
+    game.on_zoom_slider(1.0)
+    game.pan_by(120, 0)
+    shoot(game, "playing_zoom_pan.png")
+    # 后面几张图要在默认视图下拍，先复位（用 reset_view() 而不是直接改 zoom，
+    # 否则底栏滑杆的滑块位置会留在最右端）
+    game.reset_view()
+
     # 通关 / 失败界面
     game.level_index = 0
     game.level_number = game.levels[0].get("id", 1)
