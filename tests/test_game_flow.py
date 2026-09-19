@@ -1,7 +1,7 @@
 """端到端冒烟测试：真的「点」完一整关。
 
 用 pygame 的 dummy 驱动起一个无窗口的 Game，按 level.py 里给出的
-solution 顺序，把每一次点击都合成成 MOUSEBUTTONDOWN 事件打到箭头
+solution 顺序，把每一次点击都合成成「按下 + 抬起」一对鼠标事件打到箭头
 那一格上，然后推进主循环让飞行动画跑完，最后断言本关通关。
 
 这一层测试覆盖的是「点击 -> 判定 -> 飞出动画 -> 判定通关」整条链路，
@@ -32,12 +32,15 @@ def game(tmp_path):
 
 
 def click_cell(game, row, col):
-    """把一次左键点击合成到某一格上。"""
-    event = pygame.event.Event(
-        pygame.MOUSEBUTTONDOWN,
-        {"pos": game._grid_center(row, col), "button": 1},
-    )
-    game._dispatch_event(event)
+    """把一次左键点击合成到某一格上。
+
+    必须成对发「按下 + 抬起」：主循环是按下记账、抬起了结，位移没超过阈值
+    才算点击（超过阈值就改判为拖动棋盘）。只发按下不会触发任何操作。
+    """
+    pos = game._grid_center(row, col)
+    for kind in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+        game._dispatch_event(pygame.event.Event(
+            kind, {"pos": pos, "button": 1}))
 
 
 # 两支箭互相对着、谁也飞不出去：专门用来测「点错」这条分支

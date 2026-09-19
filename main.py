@@ -8,6 +8,8 @@
 
 扩展功能：AI 求解、提示、撤销、倒计时星级、关卡选择、随机关卡、存档、音效。
 快捷键：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / N 随机关卡 / Esc 菜单与返回。
+视图操作：放大后按住棋盘拖动（左键拖过 DRAG_THRESHOLD 即判为拖动，不会误点飞
+线段）、中键或右键直接拖、滚轮缩放、方向键微调、0 键复位。
 """
 
 import sys
@@ -65,6 +67,9 @@ MOUSE_EVENTS = (
 )
 
 ZOOM_MIN, ZOOM_MAX = 0.65, 1.35
+ZOOM_STEP = 0.08            # 滚轮 / 方向键一次缩放多少（滑杆值，0~1）
+PAN_STEP = 26               # 方向键一次平移多少逻辑像素
+DRAG_THRESHOLD = 8          # 按住后位移超过这么多逻辑像素就算「拖棋盘」而不是「点击」
 AUTO_STEP_INTERVAL = 0.30       # AI 自动求解时每隔多久点一支箭
 STAR_TABLE = {0: 3, 1: 2, 2: 2}
 
@@ -190,6 +195,15 @@ class Game:
         self.hover_arrow = None
         self.menu = None
         self.zoom = 1.0
+        # 棋盘平移量：相对「居中」位置的偏移（逻辑像素）。放大到超出可视区时
+        # 靠它把棋盘拖到想看的位置，缩放 / 换关时会被重新夹回合法范围。
+        self.pan = [0.0, 0.0]
+        # 拖拽状态：按下的位置与待确认的点击格子，松手时按位移判定是拖还是点
+        self.dragging = False
+        self.drag_button = 1
+        self.drag_last = (0, 0)
+        self.press_origin = None
+        self.press_cell = None
 
         # 棋盘几何
         self.cell_size = 34
@@ -269,7 +283,13 @@ class Game:
                 (pos[1] - self.view_rect.y) / self.view_scale)
 
     # ---------------- 棋盘几何 ----------------
-    def _compute_geometry(self):
+    def _viewport(self):
+        """棋盘的可视区：顶栏与底栏之间那条。放大后棋盘只能在这里面挪。"""
+        return pygame.Rect(0, TOP_BAR_HEIGHT, WINDOW_WIDTH,
+                           WINDOW_HEIGHT - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT)
+
+    def _base_cell(self):
+        """不受缩放影响的格子边长与缝隙（照可用区域铺满）。"""
         avail_w = WINDOW_WIDTH - BOARD_MARGIN_X * 2
         avail_h = (WINDOW_HEIGHT - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT
                    - BOARD_MARGIN_Y * 2)
@@ -279,16 +299,73 @@ class Game:
         gap = max(2, round(cell * 0.13))
         cell = min((avail_w - gap * (cols - 1)) / cols,
                    (avail_h - gap * (rows - 1)) / rows)
-        cell = min(cell, MAX_CELL_SIZE)
-        self.cell_size = max(6, int(cell * self.zoom))
-        self.cell_gap = max(1, int(gap * self.zoom))
+        return min(cell, MAX_CELL_SIZE), gap
+
+    def _base_position(self):
+        """棋盘放得下时居中、放不下时居中的那份「零平移」坐标。"""
+        view = self._viewport()
+        base_x = (WINDOW_WIDTH - self.board_pixel_w) // 2
+        if self.board_pixel_h <= view.height:
+            offset = max(BOARD_MARGIN_Y,
+                         (view.height - self.board_pixel_h) // 2)
+        else:
+            offset = (view.height - self.board_pixel_h) // 2
+        return base_x, TOP_BAR_HEIGHT + offset
+
+    def _clamp_position(self, x, y):
+        """把棋盘位置夹进可视区。
+
+        棋盘比可视区小 → 锁死在居中位置（没得拖）；比可视区大 → 允许拖到
+        任意一侧边缘对上可视区边缘为止，但绝不允许整块被拖出屏幕。
+        """
+        view = self._viewport()
+        if self.board_pixel_w <= view.width:
+            x = (WINDOW_WIDTH - self.board_pixel_w) // 2
+        else:
+            x = max(view.right - self.board_pixel_w, min(view.left, x))
+        if self.board_pixel_h <= view.height:
+            base_y = self._base_position()[1]
+            y = base_y
+        else:
+            y = max(view.bottom - self.board_pixel_h, min(view.top, y))
+        return int(round(x)), int(round(y))
+
+    def _compute_geometry(self, anchor=None):
+        """按当前缩放重算棋盘几何。
+
+        anchor 是画布坐标的一个锚点，缩放时它底下的那个棋盘位置尽量保持不动
+        （滚轮缩放就是锚在鼠标上的）；不给就按可视区中心算。
+        """
+        prev_w, prev_h = self.board_pixel_w, self.board_pixel_h
+        prev_x, prev_y = self.board_x, self.board_y
+
+        base_cell, base_gap = self._base_cell()
+        self.cell_size = max(6, int(base_cell * self.zoom))
+        self.cell_gap = max(1, int(base_gap * self.zoom))
+        cols, rows = self.board.cols, self.board.rows
         self.board_pixel_w = cols * self.cell_size + (cols - 1) * self.cell_gap
         self.board_pixel_h = rows * self.cell_size + (rows - 1) * self.cell_gap
-        self.board_x = (WINDOW_WIDTH - self.board_pixel_w) // 2
-        self.board_y = TOP_BAR_HEIGHT + max(
-            BOARD_MARGIN_Y,
-            (WINDOW_HEIGHT - TOP_BAR_HEIGHT - BOTTOM_BAR_HEIGHT
-             - self.board_pixel_h) // 2)
+
+        base_x, base_y = self._base_position()
+        pan_x, pan_y = self.pan
+        if anchor is not None and prev_w > 0 and prev_h > 0:
+            # 锚点落在棋盘里的相对位置：缩放前后让它停在同一个百分比处
+            u = (anchor[0] - prev_x) / prev_w
+            v = (anchor[1] - prev_y) / prev_h
+            pan_x = anchor[0] - u * self.board_pixel_w - base_x
+            pan_y = anchor[1] - v * self.board_pixel_h - base_y
+
+        self.board_x, self.board_y = self._clamp_position(base_x + pan_x,
+                                                         base_y + pan_y)
+        # 把夹过的结果写回 pan，避免拖到边界后越攒越多（松手再往回拖会「粘住」）
+        self.pan = [self.board_x - base_x, self.board_y - base_y]
+
+    def _board_center(self):
+        return (self.board_x + self.board_pixel_w // 2,
+                self.board_y + self.board_pixel_h // 2)
+
+    def _view_center(self):
+        return self._viewport().center
 
     def _cell_rect(self, r, c):
         x = self.board_x + c * (self.cell_size + self.cell_gap)
@@ -348,6 +425,7 @@ class Game:
         self.hints_used = 0
         self.undos_used = 0
         self.auto_queue = []
+        self.pan = [0.0, 0.0]
         self._compute_geometry()
         self.state = GameState.PLAYING
 
@@ -376,6 +454,7 @@ class Game:
         self.hints_used = 0
         self.undos_used = 0
         self.auto_queue = []
+        self.pan = [0.0, 0.0]           # 新关从正中间开始，不留上一关的偏移
         self._compute_geometry()
 
     def _clear_effects(self):
@@ -452,17 +531,45 @@ class Game:
         self.menu = None
         self.toast("进度已清空")
 
-    # ---------------- 缩放 ----------------
-    def on_zoom_slider(self, value):
-        self.zoom = ZOOM_MIN + value * (ZOOM_MAX - ZOOM_MIN)
-        self._compute_geometry()
+    # ---------------- 缩放与平移 ----------------
+    def _zoom_ratio(self):
+        """缩放值在滑杆上的比例（0 ~ 1）。"""
+        return (self.zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)
 
-    def nudge_zoom(self, delta):
-        value = (self.zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN) + delta
+    def on_zoom_slider(self, value, anchor=None):
+        """设置缩放（滑杆 0~1），anchor 是画布坐标的锚点。"""
         value = max(0.0, min(1.0, value))
         self.hud.zoom_slider.value = value
-        self.on_zoom_slider(value)
+        self.zoom = ZOOM_MIN + value * (ZOOM_MAX - ZOOM_MIN)
+        self._compute_geometry(self._view_center() if anchor is None
+                               else anchor)
+
+    def nudge_zoom(self, delta):
+        self.on_zoom_slider(self._zoom_ratio() + delta)
         audio.play("click")
+
+    def pan_by(self, dx, dy):
+        """把棋盘平移 (dx, dy) 逻辑像素；真的挪动了才返回 True。"""
+        if not dx and not dy:
+            return False
+        before = (self.board_x, self.board_y)
+        base_x, base_y = self._base_position()
+        self.board_x, self.board_y = self._clamp_position(self.board_x + dx,
+                                                         self.board_y + dy)
+        self.pan = [self.board_x - base_x, self.board_y - base_y]
+        return (self.board_x, self.board_y) != before
+
+    def reset_view(self):
+        """缩放与平移都复位（棋盘重新摆回正中间）。
+
+        注意滑杆的值是 0~1 的**比例**，1.0 对应 `ZOOM_MAX` 而不是 100%，
+        所以这里直接写 `self.zoom`，再把比例同步回滑杆。
+        """
+        self.pan = [0.0, 0.0]
+        self.zoom = 1.0
+        self.hud.zoom_slider.value = self._zoom_ratio()
+        self._compute_geometry()
+        self.toast("视图已复位")
 
     # ---------------- 玩法 ----------------
     def toast(self, text):
@@ -558,6 +665,108 @@ class Game:
         self.toast("随机关卡来啦")
 
     # ---------------- 鼠标交互 ----------------
+    def _handle_board_pointer(self, event):
+        if event.type == pygame.MOUSEMOTION:
+            self._handle_board_motion(event)
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            self._handle_board_press(event)
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self._handle_board_release(event)
+
+    def _handle_board_motion(self, event):
+        if self.dragging:
+            if self._button_released(event):
+                # 指针拖出窗口后在窗口外松手时，抬起事件可能收不到；
+                # MOUSEMOTION 自带按键状态，用它兜住，免得拖拽状态卡住。
+                self.dragging = False
+                self.press_origin = None
+                self.press_cell = None
+                return
+            self._drag_to(event.pos)
+            return
+        if (self.press_origin is not None
+                and self._moved_far(event.pos) and self._can_drag()):
+            # 按住后拖出了阈值：这次操作改判为「拖棋盘」，作废待确认的点击
+            self.dragging = True
+            self.drag_button = 1
+            self.press_cell = None
+            self.hover_arrow = None
+            self._drag_to(event.pos, origin=self.press_origin)
+            return
+        self._handle_playing_motion(event)
+
+    def _handle_board_press(self, event):
+        if event.button in (2, 3):          # 中键 / 右键：按住就能拖
+            if self._can_drag():
+                self.dragging = True
+                self.drag_button = event.button
+                self.drag_last = event.pos
+            return
+        if event.button != 1:
+            return
+        # 左键先记账，松手时再按位移判定是点还是拖（否则必通盘的每一格都是
+        # 线段，想拖棋盘就一定会点飞一支箭）
+        self.press_origin = event.pos
+        self.press_cell = self._cell_at(event.pos)
+
+    def _button_released(self, event):
+        """MOUSEMOTION 自带的按键状态是否显示拖拽键已经松开。"""
+        buttons = event.dict.get("buttons")
+        if buttons is None:
+            return False
+        index = self.drag_button - 1
+        return 0 <= index < len(buttons) and not buttons[index]
+
+    def _handle_board_release(self, event):
+        if event.button in (2, 3):
+            self.dragging = False
+            return
+        if event.button != 1:
+            return
+        was_dragging = self.dragging
+        origin, cell = self.press_origin, self.press_cell
+        self.dragging = False
+        self.press_origin = None
+        self.press_cell = None
+        if was_dragging or origin is None or cell is None:
+            return
+        if abs(event.pos[0] - origin[0]) > DRAG_THRESHOLD \
+                or abs(event.pos[1] - origin[1]) > DRAG_THRESHOLD:
+            return
+        if self.flying or self.blocked or self.menu is not None:
+            return
+        self._click_cell(cell)
+
+    def _can_drag(self):
+        """棋盘只有放大到超出可视区时才拖得动。"""
+        view = self._viewport()
+        return (self.board_pixel_w > view.width
+                or self.board_pixel_h > view.height)
+
+    def _moved_far(self, pos):
+        if self.press_origin is None:
+            return False
+        return (abs(pos[0] - self.press_origin[0]) > DRAG_THRESHOLD
+                or abs(pos[1] - self.press_origin[1]) > DRAG_THRESHOLD)
+
+    def _drag_to(self, pos, origin=None):
+        """把指针从上次的位置拖到 pos，棋盘跟着走。"""
+        if origin is not None:
+            self.drag_last = origin
+        dx = pos[0] - self.drag_last[0]
+        dy = pos[1] - self.drag_last[1]
+        self.drag_last = pos
+        self.pan_by(dx, dy)
+
+    def _handle_wheel(self, event):
+        """滚轮缩放，锚在鼠标指的位置上。"""
+        if not event.y or self.state != GameState.PLAYING \
+                or self.menu is not None:
+            return
+        anchor = self._to_world(pygame.mouse.get_pos())
+        step = ZOOM_STEP * (1 if event.y > 0 else -1)
+        self.on_zoom_slider(self._zoom_ratio() + step, anchor=anchor)
+
     def _handle_playing_motion(self, event):
         if event.type != pygame.MOUSEMOTION:
             return
@@ -567,19 +776,11 @@ class Game:
         cell = self._cell_at(event.pos)
         self.hover_arrow = self.board.arrow_at(*cell) if cell else None
 
-    def _handle_board_click(self, event):
-        if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
-            return
-        if self.flying or self.blocked or self.menu is not None:
-            return
-
-        cell = self._cell_at(event.pos)
-        if cell is None:
-            return
+    def _click_cell(self, cell):
+        """在某一格上落实一次左键点击。"""
         arrow = self.board.arrow_at(*cell)
         if arrow is None:
             return                      # 点到空白：不罚
-
         if self.board.can_fly_arrow(arrow):
             self._launch(arrow)
         else:
@@ -638,6 +839,9 @@ class Game:
                     self.quit()
                 if event.type == pygame.VIDEORESIZE:
                     self._resize(event.w, event.h)
+                if event.type == pygame.MOUSEWHEEL:
+                    self._handle_wheel(event)
+                    continue
                 if event.type in MOUSE_EVENTS:
                     event.dict["pos"] = self._to_world(event.dict["pos"])
                 if event.type == pygame.KEYDOWN:
@@ -678,6 +882,20 @@ class Game:
             self.new_random_level()
         elif key == pygame.K_a:
             self.auto_solve()
+        elif key == pygame.K_LEFT:
+            self.pan_by(PAN_STEP, 0)
+        elif key == pygame.K_RIGHT:
+            self.pan_by(-PAN_STEP, 0)
+        elif key == pygame.K_UP:
+            self.pan_by(0, PAN_STEP)
+        elif key == pygame.K_DOWN:
+            self.pan_by(0, -PAN_STEP)
+        elif key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+            self.nudge_zoom(ZOOM_STEP)
+        elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            self.nudge_zoom(-ZOOM_STEP)
+        elif key in (pygame.K_0, pygame.K_KP0):
+            self.reset_view()
 
     def _dispatch_event(self, event):
         if self.menu is not None:
@@ -695,9 +913,11 @@ class Game:
                     self.select_level(index)
             return
         if self.state == GameState.PLAYING:
-            self.hud.handle_event(event)
-            self._handle_playing_motion(event)
-            self._handle_board_click(event)
+            # 先给顶栏 / 底栏的控件；被它们吃掉的事件不要再落到棋盘上，
+            # 否则放大后的棋盘铺到工具栏底下时会「点一个按钮顺带飞一支箭」。
+            if self.hud.handle_event(event):
+                return
+            self._handle_board_pointer(event)
             return
         if self.state == GameState.LEVEL_CLEAR:
             self.next_button.handle_event(event)
@@ -889,7 +1109,7 @@ class Game:
         self.select_from_start.draw(self.canvas)
         self._draw_text("U 撤销 / H 提示 / A 自动求解 / G 辅助线 / N 随机关卡",
                         self.font_small, pal.text_dim, center=(cx, 900))
-        self._draw_text("Esc 菜单与返回 · 拖动窗口边缘可缩放画面",
+        self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 / 方向键微调 · 0 复位",
                         self.font_small, pal.text_dim, center=(cx, 934))
 
     def _level_rects(self):
