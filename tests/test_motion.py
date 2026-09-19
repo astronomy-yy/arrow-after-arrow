@@ -37,6 +37,7 @@ from game.arrow import (                          # noqa: E402
     Direction,
     arrow_head_sprite,
     disc_sprite,
+    head_box,
     joint_indices,
     stroke_polyline,
 )
@@ -229,7 +230,7 @@ def test_stroke_does_not_widen_the_straight_part():
 def test_disc_sprite_has_antialiased_rim():
     sprite = disc_sprite(6, (255, 0, 0))
     span = sprite.get_width()
-    assert span == 13, "直径要跟 pygame 画的整数圆一致（2r+1）"
+    assert span == 12, "直径必须等于 2r，才能和同宽度的线段逐像素对齐"
     center = sprite.get_at((span // 2, span // 2))
     assert center[:3] == (255, 0, 0)
     assert center[3] == 255
@@ -254,10 +255,9 @@ def test_disc_sprite_is_cached():
 def test_arrow_head_sprite_covers_the_triangle():
     for direction in Direction:
         sprite = arrow_head_sprite(direction, 18, (0, 255, 0))
-        assert sprite.get_width() == sprite.get_height()
-        assert sprite.get_width() > 18
-        assert sprite.get_at((sprite.get_width() // 2,
-                              sprite.get_height() // 2))[3] == 255
+        x0, y0, w, h = head_box(direction, 18)
+        assert sprite.get_size() == (w, h)
+        assert sprite.get_width() > 18 and sprite.get_height() > 18
 
 
 def test_arrow_head_sprite_scales_with_size():

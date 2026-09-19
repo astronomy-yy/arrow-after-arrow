@@ -34,6 +34,7 @@ class Palette:
     success: tuple
     veil: tuple            # 结果界面遮罩
     trail: tuple           # 飞出残影
+    rim_shade: float       # 线段外描边 = 线身色 × 这个系数
 
 
 NIGHT = Palette(
@@ -57,6 +58,8 @@ NIGHT = Palette(
     success=(140, 214, 150),
     veil=(0, 0, 0, 165),
     trail=(150, 156, 188),
+    # 深色底上描边要压得狠一点，线段边缘才「切」得出来
+    rim_shade=0.46,
 )
 
 DAY = Palette(
@@ -80,6 +83,8 @@ DAY = Palette(
     success=(78, 178, 106),
     veil=(255, 255, 255, 190),
     trail=(168, 174, 200),
+    # 浅色底上描边只轻轻压一档就够，压狠了整片线段会发黑发脏
+    rim_shade=0.72,
 )
 
 THEMES = {"night": NIGHT, "day": DAY}

@@ -50,9 +50,14 @@ HEART_CENTER_Y = 86
 CLOCK_CENTER_Y = 122
 
 # ---- 线段 ----
-SEGMENT_WIDTH_RATIO = 0.26   # 线宽 / 格子边长（参考图里线偏细，格子看得见）
+SEGMENT_WIDTH_RATIO = 0.30   # 线宽 / 格子边长（对着参考录屏量的：线宽约占格距 1/4）
 MIN_SEGMENT_WIDTH = 4
-MAX_SEGMENT_WIDTH = 12
+MAX_SEGMENT_WIDTH = 15
+HEAD_SPAN_RATIO = 1.90       # 箭头底边宽 / 线宽
+HEAD_LENGTH_RATIO = 2.15     # 箭头尾根到尖端的长 / 线宽
+HEAD_SWEEP_RATIO = 0.42      # 倒钩前掠 / 线宽（后缘内凹，把线身兜住）
+RIM_RATIO = 0.09             # 外描边宽 / 线宽（粗线描边跟着粗一档）
+RIM_SHADE = 0.46             # 外描边 = 线身色 × 这个系数（压暗、色相不变）
 HINT_PULSE_SPEED = 4.5       # 提示高亮呼吸速度
 
 # 线段箭糖果色调色板（关卡数据中的 color 为该列表索引），风格对齐参考图

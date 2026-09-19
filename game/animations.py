@@ -10,7 +10,7 @@
 
 import math
 
-from game.arrow import blit_disc, draw_arrow_head, lighten, stroke_polyline
+from game.arrow import blit_disc, draw_segment, lighten
 from game import theme
 from game.settings import WRONG_FLASH
 
@@ -74,10 +74,14 @@ def trail_alpha(age):
 
 
 def draw_flowing(surface, route, n_cells, offset, direction, color, width):
-    """把整条线段沿 route 向前推进 offset 格后画出（圆角折线 + 箭头）。"""
+    """把整条线段沿 route 向前推进 offset 格后画出。
+
+    走的是和盘面上静止线段**同一个** draw_segment：起飞那一瞬间（offset=0）
+    和之后的每一帧，线宽、拐角圆角、箭头形状、外描边都完全一致，不会
+    「飞起来就变了个样」。
+    """
     points = flow_points(route, n_cells, offset)
-    stroke_polyline(surface, points, color, width)
-    draw_arrow_head(surface, direction, points[-1], int(width * 1.85), color)
+    draw_segment(surface, points, direction, color, width)
 
 
 class FlyingSegment:

@@ -23,7 +23,13 @@ from game.animations import (
     FlyingSegment,
     HintPulse,
 )
-from game.arrow import DIRECTION_DELTA, draw_segment, lighten, segment_width
+from game.arrow import (
+    DIRECTION_DELTA,
+    blit_disc,
+    draw_segment,
+    lighten,
+    segment_width,
+)
 from game.board import Board
 from game.generator import random_level as make_random_level
 from game.hud import Hud
@@ -1057,12 +1063,12 @@ class Game:
 
     def _draw_board(self):
         pal = theme.get()
-        # 辅助线点阵
+        # 辅助线点阵：用抗锯齿圆点，缩到最小格子时也不会变成一撮锯齿
         if self.guide_on:
             radius = max(1, int(self.cell_size * 0.055))
             for (r, c) in self._mask_cells():
-                pygame.draw.circle(self.canvas, pal.dot,
-                                   self._cell_rect(r, c).center, radius)
+                blit_disc(self.canvas, self._cell_rect(r, c).center,
+                          radius, pal.dot)
 
         width = segment_width(self.cell_size)
         blocked_ids = {fb.arrow_id for fb in self.blocked}
@@ -1071,13 +1077,16 @@ class Game:
                 continue
             centers = [self._cell_rect(r, c).center for (r, c) in arrow.cells]
 
+            # 高亮先铺一层更宽的光晕，真正的线段再压在它上面。
+            # 光晕自己不描边 —— 描了会在光晕与线身之间夹一圈黑边。
             if arrow.id == self.hint_arrow_id and self.hint_pulse is not None:
                 stroke = self.hint_pulse.stroke_color(arrow.color)
                 draw_segment(self.canvas, centers, arrow.direction, stroke,
-                             int(width * 1.9))
+                             int(width * 1.9), outline=False)
             elif self.hover_arrow is arrow:
                 draw_segment(self.canvas, centers, arrow.direction,
-                             lighten(arrow.color, 48), int(width * 1.5))
+                             lighten(arrow.color, 48), int(width * 1.5),
+                             outline=False)
 
             color = WRONG_COLOR if arrow.id in self.board.wrong_ids \
                 else arrow.color
