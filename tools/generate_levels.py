@@ -1,213 +1,165 @@
-"""用“逆向构造法”生成线段箭关卡，覆写 game/level.py。
+# -*- coding: utf-8 -*-
+"""关卡生成脚本：用 game/generator.py 的逆向构造法重写 game/level.py。
 
-玩法（蛇形式沿轨迹滑出）：点击后线段各节沿“自身折线 + 箭头延长线”
-流动飞出；身体只经过自己原来的格子，因此一支箭能否飞出只取决于
-箭头端朝向到边界之间有没有其他线段。
+用法（在项目根目录）：
+    python tools/generate_levels.py            # 全部重新生成
+    python tools/generate_levels.py 3          # 只重新生成第 3 关
+    python tools/generate_levels.py --check    # 只校验现有 level.py
 
-构造保证：
-1. 从空棋盘逐条放箭，新箭的箭头射线必须为空（当前局面就能飞出）；
-2. 尾巴第一节强制沿箭头反方向直行（箭头顺着最后一段轨迹），
-   从第二节起才允许转弯，尾巴不能绕到箭头前方；
-3. 箭头端优先选边界并朝外，棋盘覆盖率更高；
-4. 每支箭至少 2 格（必有箭杆）；
-5. 放置顺序的逆序就是一条必然通关的消除顺序。
+生成出来的每一关都做过完整模拟校验：按 solution 顺序点击，每一步
+箭头都必须真的能飞出去。
+"""
+
+import os
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from game.generator import build_level, difficulty, fill_ratio  # noqa: E402
+from game.shapes import cells_of, is_connected                  # noqa: E402
+
+# (名字, 形状, 行, 列, 种子, 时限秒)
+PLAN = [
+    ("第1关 初露锋芒", "rect", 12, 9, 1101021, 240),
+    ("第2关 渐入佳境", "rect", 13, 10, 2202024, 260),
+    ("第3关 圆转如意", "round", 11, 11, 3303008, 240),
+    ("第4关 菱光乍现", "diamond", 13, 13, 4404016, 260),
+    ("第5关 十字路口", "cross", 13, 13, 5505032, 260),
+    ("第6关 心之所向", "heart", 13, 13, 6606048, 260),
+    ("第7关 长街深巷", "rect", 15, 11, 7707056, 300),
+    ("第8关 步步登高", "triangle", 12, 13, 8808064, 280),
+    ("第9关 大盘如月", "round", 15, 15, 9909072, 320),
+    ("第10关 沙漏流转", "hourglass", 14, 12, 11101088, 300),
+    ("第11关 环环相扣", "ring", 15, 15, 12121104, 320),
+    ("第12关 满盘皆兵", "rect", 18, 13, 13131200, 360),
+]
+
+HEADER = '''"""关卡数据（由 tools/generate_levels.py 用「逆向构造法」生成）。
+
+每支箭的数据：
+- cells：线段占据的格子，顺序为 尾端 -> 箭头端，相邻格上下左右相连，
+  形状为随机蜿蜒的蛇形折线（长短混合、频繁拐弯、朝向随机）；
+- dir：箭头方向（"U"/"D"/"L"/"R"），点击后各节沿自身折线流动、
+  再沿该方向延长线飞出；
+- color：game/settings.py 中 ARROW_PALETTE 的颜色索引。
+
+每关的数据：
+- shape：game/shapes.py 里的造型名（rect/round/diamond/heart/...），
+  线段只铺在这个造型内，辅助线点阵也只画在造型格上；
+- seed：生成该关用的随机种子，便于复现；
+- time_limit：倒计时秒数；
+- solution：一条已验证的通关顺序（箭 id 列表，id 即 arrows 列表下标）。
+  它是生成时「放箭顺序」的倒序：最后放进去的箭最先点。
 
 重新生成：python tools/generate_levels.py
 """
 
-import os
-import pprint
-import random
-
-ROWS = COLS = 9
-PALETTE_SIZE = 9
-
-DELTA = {"U": (-1, 0), "D": (1, 0), "L": (0, -1), "R": (0, 1)}
-
-
-def head_path_clear(occ, hr, hc, dch):
-    """箭头端朝向到边界之间是否没有任何占据。"""
-    dr, dc = DELTA[dch]
-    r, c = hr + dr, hc + dc
-    while 0 <= r < ROWS and 0 <= c < COLS:
-        if occ[r][c] is not None:
-            return False
-        r += dr
-        c += dc
-    return True
-
-
-def in_front_of_head(nr, nc, hr, hc, dch):
-    """新格子是否位于箭头朝向射线上（尾巴不能长到自己箭头前头）。"""
-    dr, dc = DELTA[dch]
-    if dr != 0:
-        return nc == hc and (nr - hr) * dr > 0
-    return nr == hr and (nc - hc) * dc > 0
-
-
-def generate_one_level(count, seed, min_len, max_len, max_turns):
-    """在单个种子下尽力生成 count 支箭，返回 (箭列表, 通关顺序, 覆盖率)。"""
-    rng = random.Random(seed)
-    occ = [[None] * COLS for _ in range(ROWS)]
-    arrows = []
-    add_order = []
-    last_color = None
-    attempts = 0
-
-    while len(arrows) < count and attempts < 8000:
-        attempts += 1
-        empties = [(r, c) for r in range(ROWS) for c in range(COLS)
-                   if occ[r][c] is None]
-        if not empties:
-            break
-
-        # 箭头端优先选边界格
-        boundary = [(r, c) for (r, c) in empties
-                    if r == 0 or r == ROWS - 1 or c == 0 or c == COLS - 1]
-        if boundary and rng.random() < 0.75:
-            hr, hc = rng.choice(boundary)
-            outs = []
-            if hr == 0:
-                outs.append("U")
-            if hr == ROWS - 1:
-                outs.append("D")
-            if hc == 0:
-                outs.append("L")
-            if hc == COLS - 1:
-                outs.append("R")
-            if outs and rng.random() < 0.65:
-                dch = rng.choice(outs)
-            else:
-                dch = rng.choice(list(DELTA))
-        else:
-            hr, hc = rng.choice(empties)
-            dch = rng.choice(list(DELTA))
-
-        # 箭头射线必须为空
-        if not head_path_clear(occ, hr, hc, dch):
-            continue
-
-        dr, dc = DELTA[dch]
-        target_len = rng.randint(min_len, max_len)
-        cells = [(hr, hc)]
-        gr, gc = -dr, -dc          # 尾巴初始生长方向 = 箭头反方向
-        cr, cc = hr, hc
-        turns = 0
-        grew = True
-
-        for step in range(target_len - 1):
-            if step == 0:
-                candidates = [(gr, gc)]               # 第一节强制直行
-            elif turns >= max_turns:
-                candidates = [(gr, gc)]
-            else:
-                candidates = [(gr, gc), (gr, gc), (-gc, gr), (gc, -gr)]
-            rng.shuffle(candidates)
-
-            chosen = None
-            for mdr, mdc in candidates:
-                nr, nc = cr + mdr, cc + mdc
-                if not (0 <= nr < ROWS and 0 <= nc < COLS):
-                    continue
-                if occ[nr][nc] is not None or (nr, nc) in cells:
-                    continue
-                if in_front_of_head(nr, nc, hr, hc, dch):
-                    continue
-                chosen = (nr, nc, mdr, mdc)
-                break
-
-            if chosen is None:
-                grew = False
-                break
-            nr, nc, mdr, mdc = chosen
-            if (mdr, mdc) != (gr, gc):
-                turns += 1
-            gr, gc = mdr, mdc
-            cr, cc = nr, nc
-            cells.append((nr, nc))
-
-        if not grew or len(cells) < min_len:
-            continue
-
-        cells.reverse()            # 尾端 -> 箭头端
-        arrow_id = len(arrows)
-        for (r, c) in cells:
-            occ[r][c] = arrow_id
-
-        color_choices = [c for c in range(PALETTE_SIZE) if c != last_color]
-        color_index = rng.choice(color_choices)
-        last_color = color_index
-
-        arrows.append({"cells": cells, "dir": dch, "color": color_index})
-        add_order.append(arrow_id)
-
-    coverage = sum(len(a["cells"]) for a in arrows) / (ROWS * COLS)
-    return arrows, list(reversed(add_order)), coverage
-
-
-def generate_best(count, base_seed, min_len, max_len, max_turns):
-    """优先找到达标的种子；都不达标则返回箭数最多的一次结果。"""
-    best = None
-    for offset in range(60):
-        seed = base_seed + offset
-        arrows, solution, coverage = generate_one_level(
-            count, seed, min_len, max_len, max_turns
-        )
-        if len(arrows) >= count:
-            return arrows, solution, seed, coverage
-        if best is None or len(arrows) > len(best[0]):
-            best = (arrows, solution, seed, coverage)
-    print(f"  警告：目标 {count} 支未达到，采用最佳结果 {len(best[0])} 支")
-    return best
-
-
-HEADER = '''"""关卡数据（由 tools/generate_levels.py 用逆向构造法确定性生成）。
-
-每支箭的数据：
-- cells：线段占据的格子，顺序为 尾端 -> 箭头端，相邻格上下左右相连，可拐弯；
-  紧挨着箭头端的一节与箭头同向（箭头始终顺着最后一段轨迹）；
-- dir：箭头方向（"U"/"D"/"L"/"R"），点击后各节沿自身折线流动、
-  再沿该方向延长线飞出；
-- color：game/settings.py 中 ARROW_PALETTE 的颜色索引；
-- seed：生成该关所用随机种子，便于复现；
-- solution：一条已验证的通关顺序（箭 id 列表，id 即 arrows 列表下标）。
-"""
 '''
 
 
+def build_one(index):
+    name, shape, rows, cols, seed, limit = PLAN[index]
+    t0 = time.time()
+    # 大造型的填充率方差大，靠多随机重启挑最满的一版（一关也就几百毫秒）
+    level = build_level(rows, cols, shape, seed, name=name,
+                        mistakes=3, time_limit=limit, max_attempts=200)
+    if level is None:
+        raise SystemExit(f"第 {index + 1} 关生成失败：{shape} {rows}x{cols}")
+    level["id"] = index + 1
+    print(f"  {name:12s} {shape:10s} {rows:2d}x{cols:2d} "
+          f"箭数={len(level['arrows']):3d} "
+          f"填充率={fill_ratio(level):.2f} "
+          f"难度={difficulty(level):5.1f} 耗时={time.time() - t0:.1f}s")
+    return level
+
+
+def dump(levels, path):
+    lines = [HEADER, "LEVELS = ["]
+    for level in levels:
+        lines.append("    {")
+        lines.append(f"        'id': {level['id']},")
+        lines.append(f"        'name': {level['name']!r},")
+        lines.append(f"        'shape': {level['shape']!r},")
+        lines.append(f"        'mistakes': {level['mistakes']},")
+        lines.append(f"        'rows': {level['rows']},")
+        lines.append(f"        'cols': {level['cols']},")
+        lines.append(f"        'seed': {level['seed']},")
+        lines.append(f"        'time_limit': {level['time_limit']},")
+        lines.append("        'arrows': [")
+        for arrow in level["arrows"]:
+            lines.append(f"            {{'cells': {arrow['cells']!r}, "
+                         f"'dir': {arrow['dir']!r}, "
+                         f"'color': {arrow['color']}}},")
+        lines.append("        ],")
+        lines.append(f"        'solution': {level['solution']!r},")
+        lines.append("    },")
+    lines.append("]")
+    lines.append("")
+    lines.append("")
+    lines.append("SHAPE_LABELS = {")
+    lines.append("    'rect': '方形', 'round': '圆形', 'diamond': '菱形',")
+    lines.append("    'heart': '心形', 'triangle': '三角', 'cross': '十字',")
+    lines.append("    'hourglass': '沙漏', 'ring': '圆环',")
+    lines.append("}")
+    lines.append("")
+    text = "\n".join(lines)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    print(f"已写入 {path}（{len(text)} 字节，{len(levels)} 关）")
+
+
+def check(levels):
+    """只读校验：形状连通、solution 全程可飞。"""
+    from game.board import Board
+
+    ok = True
+    for index, level in enumerate(levels):
+        mask = cells_of(level["rows"], level["cols"], level.get("shape", "rect"))
+        connected = is_connected(mask)
+        board = Board(level)
+        by_id = {arrow.id: arrow for arrow in board.arrows}
+        solution_ok = True
+        for arrow_id in level["solution"]:
+            arrow = by_id.get(arrow_id)
+            if arrow is None or not board.can_fly_arrow(arrow):
+                solution_ok = False
+                break
+            board.remove_arrow(arrow)
+        solution_ok = solution_ok and board.remaining == 0
+        flag = "OK " if (connected and solution_ok) else "BAD"
+        print(f"  [{flag}] 第{index + 1}关 {level['name']:12s} "
+              f"形状连通={connected} solution可通关={solution_ok} "
+              f"箭数={len(level['arrows'])}")
+        ok = ok and connected and solution_ok
+    return ok
+
+
 def main():
-    # 关卡名、失误上限、目标箭数、种子、最短、最长、最多转弯次数
-    configs = [
-        ("第1关 初露锋芒", 3, 10, 1101, 2, 4, 1),
-        ("第2关 曲径通幽", 3, 14, 2202, 2, 5, 2),
-        ("第3关 满盘皆兵", 4, 18, 3303, 2, 6, 2),
-    ]
+    args = sys.argv[1:]
+    target = os.path.join(ROOT, "game", "level.py")
+    if target not in sys.path:
+        pass
 
-    levels = []
-    for name, mistakes, count, seed, min_len, max_len, max_turns in configs:
-        arrows, solution, used_seed, coverage = generate_best(
-            count, seed, min_len, max_len, max_turns
-        )
-        levels.append({
-            "name": name,
-            "mistakes": mistakes,
-            "rows": ROWS,
-            "cols": COLS,
-            "seed": used_seed,
-            "arrows": arrows,
-            "solution": solution,
-        })
-        print(f"{name}：{len(arrows)} 支箭，覆盖率 {coverage:.0%}，"
-              f"种子 {used_seed}")
+    if "--check" in args:
+        from game.level import LEVELS
+        print("校验 game/level.py：")
+        raise SystemExit(0 if check(LEVELS) else 1)
 
-    text = HEADER + "\nLEVELS = "
-    text += pprint.pformat(levels, width=100, sort_dicts=False)
-    text += "\n"
+    if args and args[0].isdigit():
+        only = int(args[0]) - 1
+        from game.level import LEVELS
+        levels = list(LEVELS)
+        print(f"重新生成第 {only + 1} 关：")
+        levels[only] = build_one(only)
+    else:
+        print("生成全部关卡：")
+        levels = [build_one(i) for i in range(len(PLAN))]
 
-    out_path = os.path.join(os.path.dirname(__file__), "..", "game", "level.py")
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(text)
-    print("已写入:", os.path.abspath(out_path))
+    dump(levels, target)
+    print("校验新生成的关卡：")
+    check(levels)
 
 
 if __name__ == "__main__":

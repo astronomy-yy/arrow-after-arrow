@@ -1,0 +1,91 @@
+# -*- coding: utf-8 -*-
+"""离屏渲染各界面截图，存到 assets/screenshots/。
+
+无头运行（不弹窗口），用于写 README / 博客时贴图：
+    python tools/screenshot.py
+"""
+
+import os
+import sys
+import tempfile
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+import pygame                                   # noqa: E402
+
+from game import theme                          # noqa: E402
+from game.states import GameState               # noqa: E402
+from main import Game                           # noqa: E402
+
+OUT = os.path.join(ROOT, "assets", "screenshots")
+# 截图不能碰玩家真正的存档，写到临时目录去
+TMP_SAVE = os.path.join(tempfile.gettempdir(), "arrow_after_arrow_shot.json")
+
+
+def shoot(game, filename):
+    game._draw()
+    path = os.path.join(OUT, filename)
+    pygame.image.save(game.canvas, path)
+    print("saved", path)
+
+
+def main():
+    os.makedirs(OUT, exist_ok=True)
+    # 每次从干净的临时存档开始，否则上一轮跑出来的进度会印到本轮的图上
+    if os.path.exists(TMP_SAVE):
+        os.remove(TMP_SAVE)
+    game = Game(save_path=TMP_SAVE)
+
+    theme.set_theme("night")
+    game.state = GameState.START
+    shoot(game, "start.png")
+
+    game.state = GameState.LEVEL_SELECT
+    game.save.data["cleared"] = [1, 2]
+    game.save.data["stars"] = {"1": 3, "2": 2}
+    shoot(game, "level_select.png")
+
+    for index, name in [(0, "playing_level1.png"), (2, "playing_level3.png"),
+                        (8, "playing_level9.png"), (11, "playing_level12.png")]:
+        game.level_index = index
+        game.level_number = game.levels[index].get("id", index + 1)
+        game._load_level(game.levels[index])
+        game.state = GameState.PLAYING
+        game._compute_geometry()
+        shoot(game, name)
+
+    # 通关 / 失败界面
+    game.level_index = 0
+    game.level_number = game.levels[0].get("id", 1)
+    game._load_level(game.levels[0])
+    game.stars = 3
+    game.state = GameState.LEVEL_CLEAR
+    shoot(game, "level_clear.png")
+
+    game.board.mistakes = 0
+    game.state = GameState.GAME_OVER
+    shoot(game, "game_over.png")
+
+    # 菜单面板
+    game.state = GameState.PLAYING
+    game.open_menu()
+    shoot(game, "menu.png")
+
+    # 日间主题
+    if theme.get().name != "day":
+        game.toggle_theme()
+    game.menu = None
+    game.level_index = 2
+    game._load_level(game.levels[2])
+    game.state = GameState.PLAYING
+    shoot(game, "playing_day.png")
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    main()

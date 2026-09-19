@@ -1,25 +1,26 @@
-"""线段箭“沿自身轨迹滑出”与碰撞弹回动画。"""
+"""线段箭的位移动画：沿自身轨迹滑出、出界后淡出、被挡时的前冲弹回。
+
+对齐参考录屏的表现：
+- 飞出：各节先沿线段自己的折线流动，再顺着箭头方向一路滑出棋盘，
+  离开棋盘后逐渐褪成背景色，直到完全看不见；
+- 尾迹：尾节离开某个格点后，原地短暂亮起一个灰点再淡掉；
+- 被挡：整条线段变红，沿轨迹往前冲一下就弹回原位（之后由主程序
+  把它标记成常驻暗红）。
+"""
 
 import math
 
 import pygame
 
-from game.arrow import draw_arrow_head
-from game.settings import (
-    CELL_SIZE,
-    COLOR_DANGER,
-    COLOR_TRAIL,
-    SEGMENT_WIDTH,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
-)
+from game.arrow import draw_arrow_head, lighten
+from game import theme
+from game.settings import WRONG_FLASH
 
-FLY_SPEED = 16.0        # 沿线流动速度，单位：节（格）/秒
-BLOCK_DURATION = 0.55   # 碰撞弹回时长
-TOAST_DURATION = 0.9    # “被挡住了！”提示时长
-TRAIL_LIFE = 0.55       # 残影格点停留时间
-PUSH_STEPS = 0.6        # 被挡时沿轨迹前冲的节数
-HEAD_SIZE = int(SEGMENT_WIDTH * 1.9)
+FLY_SPEED = 26.0        # 沿线流动速度，单位：节（格）/秒
+TRAIL_LIFE = 0.5        # 残影格点停留时间
+PUSH_STEPS = 0.55       # 被挡时沿轨迹前冲的节数
+FADE_CELLS = 2.6        # 出界后多少格距离内淡到看不见
+TOAST_DURATION = 1.0    # 底部提示文字停留时长
 
 
 def point_at(route, s):
@@ -29,71 +30,86 @@ def point_at(route, s):
     last = len(route) - 1
     if s >= last:
         return route[-1]
-    i = int(s)
-    f = s - i
-    x1, y1 = route[i]
-    x2, y2 = route[i + 1]
-    return (x1 + (x2 - x1) * f, y1 + (y2 - y1) * f)
+    index = int(s)
+    frac = s - index
+    x1, y1 = route[index]
+    x2, y2 = route[index + 1]
+    return (x1 + (x2 - x1) * frac, y1 + (y2 - y1) * frac)
 
 
-def draw_flowing(surface, route, n_cells, offset, direction, color,
-                 width=SEGMENT_WIDTH):
+def fade_color(color, ratio):
+    """按比例把线段颜色混向背景色，得到「淡出」效果。"""
+    bg = theme.get().bg
+    ratio = max(0.0, min(1.0, ratio))
+    return tuple(int(color[i] + (bg[i] - color[i]) * ratio) for i in range(3))
+
+
+def draw_flowing(surface, route, n_cells, offset, direction, color, width):
     """把 n_cells 个节沿 route 向前推进 offset 格后画出（圆角折线 + 箭头）。"""
     points = [point_at(route, i + offset) for i in range(n_cells)]
     if len(points) >= 2:
         pygame.draw.lines(surface, color, False, points, width)
-    for p in points:
-        pygame.draw.circle(surface, color, (int(p[0]), int(p[1])), width // 2)
-    draw_arrow_head(surface, direction, points[-1], HEAD_SIZE, color)
+    for point in points:
+        pygame.draw.circle(surface, color, (int(point[0]), int(point[1])),
+                           width // 2)
+    draw_arrow_head(surface, direction, points[-1], int(width * 1.85), color)
 
 
 class FlyingSegment:
-    """蛇形式滑出：各节沿“自身折线 + 箭头延长线”流动，全部离屏后销毁。"""
+    """飞出动画：各节沿「自身折线 + 箭头延长线」流动，淡出后销毁。"""
 
-    def __init__(self, route, trail_points, n_cells, direction, color):
-        self.route = route              # 完整像素路径（尾 -> 头 -> 屏幕外）
-        self.trail_points = trail_points  # 棋盘内路径点，用于灰色残影
+    def __init__(self, route, trail_points, n_cells, direction, color, width):
+        self.route = route
+        self.trail_points = trail_points
         self.n = n_cells
         self.direction = direction
         self.color = color
-        self.t = 0.0                    # 已推进的格数
+        self.width = width
+        self.t = 0.0
         self.dead = False
+        self.escaped = 0.0          # 已经跑到棋盘外的格数
 
     def update(self, dt, board_rect=None):
         self.t += dt * FLY_SPEED
-        # 尾节最后离开；尾节完全飞出屏幕即结束
         tail_x, tail_y = point_at(self.route, self.t)
-        m = SEGMENT_WIDTH * 2
-        if (tail_x < -m or tail_x > WINDOW_WIDTH + m or
-                tail_y < -m or tail_y > WINDOW_HEIGHT + m):
+        if board_rect is not None and not board_rect.collidepoint(tail_x,
+                                                                  tail_y):
+            self.escaped += dt * FLY_SPEED
+        if self.escaped > FADE_CELLS:
+            self.dead = True
+        margin = self.width * 4
+        if (tail_x < -margin or tail_x > theme_bounds()[0] + margin or
+                tail_y < -margin or tail_y > theme_bounds()[1] + margin):
             self.dead = True
 
     def draw(self, surface):
-        # 灰色残影：尾节离开某个格点后，该点短暂亮起再淡出
-        radius = max(2, int(CELL_SIZE * 0.07))
+        trail_color = theme.get().trail
+        radius = max(2, int(self.width * 0.22))
         size = radius * 2 + 4
-        for j, pos in enumerate(self.trail_points):
-            age = self.t - j
+        for index, pos in enumerate(self.trail_points):
+            age = self.t - index
             if 0.0 < age < TRAIL_LIFE:
                 alpha = int(150 * (1 - age / TRAIL_LIFE))
                 dot = pygame.Surface((size, size), pygame.SRCALPHA)
-                pygame.draw.circle(dot, (*COLOR_TRAIL, alpha),
+                pygame.draw.circle(dot, (*trail_color, alpha),
                                    (size // 2, size // 2), radius)
                 surface.blit(dot, (pos[0] - size // 2, pos[1] - size // 2))
 
+        color = fade_color(self.color, self.escaped / FADE_CELLS)
         draw_flowing(surface, self.route, self.n, self.t,
-                     self.direction, self.color)
+                     self.direction, color, self.width)
 
 
 class BlockedFeedback:
-    """被挡反馈：整条变红，沿自身轨迹前冲一下，再弹回原位。"""
+    """被挡反馈：整条变红，沿自身轨迹前冲一下再弹回原位。"""
 
-    def __init__(self, route, n_cells, arrow):
+    def __init__(self, route, n_cells, arrow, width):
         self.arrow_id = arrow.id
         self.route = route
         self.n = n_cells
         self.direction = arrow.direction
-        self.timer = BLOCK_DURATION
+        self.width = width
+        self.timer = WRONG_FLASH
         self.dead = False
 
     def update(self, dt):
@@ -102,7 +118,30 @@ class BlockedFeedback:
             self.dead = True
 
     def draw(self, surface):
-        progress = 1 - max(self.timer, 0) / BLOCK_DURATION
-        offset = PUSH_STEPS * math.sin(math.pi * progress)  # 0 -> 前冲 -> 0
+        progress = 1 - max(self.timer, 0) / WRONG_FLASH
+        offset = PUSH_STEPS * math.sin(math.pi * progress)   # 前冲 -> 弹回
         draw_flowing(surface, self.route, self.n, offset,
-                     self.direction, COLOR_DANGER)
+                     self.direction, theme.get().danger, self.width)
+
+
+class HintPulse:
+    """提示高亮：给被提示的那支箭套一层会呼吸的浅色描边。"""
+
+    def __init__(self, arrow, width):
+        self.arrow_id = arrow.id
+        self.width = width
+        self.timer = 2.2
+
+    def update(self, dt):
+        self.timer -= dt
+        return self.timer > 0
+
+    def stroke_color(self, base):
+        phase = (math.sin(self.timer * 6.0) + 1.0) / 2.0
+        return lighten(base, int(40 + 70 * phase))
+
+
+def theme_bounds():
+    """当前逻辑画布尺寸（避免 import settings 形成环）。"""
+    from game.settings import WINDOW_HEIGHT, WINDOW_WIDTH
+    return WINDOW_WIDTH, WINDOW_HEIGHT
