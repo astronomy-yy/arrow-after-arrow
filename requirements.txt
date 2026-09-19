@@ -1,0 +1,7 @@
+# pygame 社区版（Community Edition）
+# 注意：安装包名是 pygame-ce，但导入名仍然是 pygame，API 与 pygame 2.x 完全兼容。
+# Python 3.14 上官方 pygame 暂无预编译 wheel，会导致源码编译失败，故使用 pygame-ce。
+pygame-ce>=2.5.0
+
+# 单元测试
+pytest>=8.0
