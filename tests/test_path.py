@@ -1,7 +1,8 @@
 """线段箭路径检测 Board.can_fly 的单元测试。
 
 覆盖：四方向无阻挡、贴边出界、四方向被挡、线段身体阻挡、
-空格处理、删除后阻挡解除与重置、三个生成关卡的通关顺序回归。
+弯线沿自身轨迹滑出（身体不横扫）、弯线箭头射线被挡、
+空格处理、删除解除阻挡与重置、三个生成关卡的通关顺序回归。
 """
 
 import pytest
@@ -65,7 +66,7 @@ def test_blocked_four_directions(head, d, block, block_dir):
     assert b.can_fly(*block) is True   # 阻挡者贴边朝外，自己能飞
 
 
-# ---------- 线段的“身体”也会形成阻挡 ----------
+# ---------- 线段的“身体”也会挡住别人的箭头射线 ----------
 
 def test_segment_body_blocks():
     b = make_board([
@@ -74,6 +75,29 @@ def test_segment_body_blocks():
     ])
     assert b.can_fly(2, 0) is False   # 被竖线身体挡住
     assert b.can_fly(0, 3) is True    # 竖线箭头端朝上，直接出界
+
+
+# ---------- 弯线沿自身轨迹滑出：身体不横扫，旁边有箭也能飞 ----------
+
+def test_bent_flows_along_own_path():
+    b = make_board([
+        # L 形：尾 (2,0) -> (2,1) -> 头 (1,1)，箭头朝上
+        seg([(2, 0), (2, 1), (1, 1)], "U", 0),
+        seg([(1, 0)], "U", 1),          # 在尾格旁边，但不在它的滑出路径上
+    ], rows=3, cols=3)
+    assert b.can_fly(1, 1) is True     # 箭头射线空，沿自身轨迹流出
+    assert b.can_fly(1, 0) is True
+
+
+# ---------- 弯线箭头射线上有线段：被挡 ----------
+
+def test_bent_head_ray_blocked():
+    b = make_board([
+        seg([(2, 0), (2, 1), (1, 1)], "U", 0),
+        seg([(0, 1)], "U", 1),          # 正好在箭头 (1,1) 的正上方
+    ], rows=3, cols=3)
+    assert b.can_fly(1, 1) is False
+    assert b.can_fly(0, 1) is True
 
 
 # ---------- 空格 ----------

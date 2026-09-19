@@ -1,16 +1,17 @@
-"""方向枚举、方向映射与箭头造型绘制。"""
+"""方向枚举、方向映射与线段箭绘制。"""
 
-import functools
 from enum import Enum
 
 import pygame
+
+from game.settings import SEGMENT_WIDTH
 
 # 空格标记
 EMPTY = "."
 
 
 class Direction(Enum):
-    """四个飞行方向，枚举值与关卡网格中的字符保持一致。"""
+    """四个飞行方向，枚举值与关卡数据字符一致。"""
 
     UP = "U"
     DOWN = "D"
@@ -33,51 +34,57 @@ DIRECTION_DELTA = {
 }
 
 
-def _build_arrow_set(size, color):
-    """画一支朝右的箭（箭杆 + 箭头 + V 形尾羽），再旋转出四个方向。"""
-    canvas = max(int(size * 1.7), 8)
-    surf = pygame.Surface((canvas, canvas), pygame.SRCALPHA)
-    cx = cy = canvas / 2
-    L = size
+def draw_arrow_head(surface, direction, end_center, size, color):
+    """在线段末端画饱满三角箭头，尖端沿方向凸出在线段最前端。"""
+    px, py = end_center
+    dr, dc = DIRECTION_DELTA[direction]
+    fx, fy = dc, dr                  # 行列增量换算为屏幕 x/y 增量
+    half_w = size * 0.46             # 三角底边半宽（约为线宽的 1.8 倍）
 
-    # 箭杆
-    shaft = pygame.Rect(0, 0, int(L * 0.62), max(int(L * 0.15), 2))
-    shaft.center = (cx - L * 0.05, cy)
-    pygame.draw.rect(surf, color, shaft, border_radius=shaft.height // 2)
+    tip = (px + fx * size * 0.55, py + fy * size * 0.55)
+    base = (px - fx * size * 0.42, py - fy * size * 0.42)
+    perp = (-fy, fx)                 # 垂直方向
 
-    # 箭头（三角形，尖端朝右）
-    head = [
-        (cx + L * 0.52, cy),
-        (cx + L * 0.10, cy - L * 0.30),
-        (cx + L * 0.10, cy + L * 0.30),
+    points = [
+        tip,
+        (base[0] + perp[0] * half_w, base[1] + perp[1] * half_w),
+        (base[0] - perp[0] * half_w, base[1] - perp[1] * half_w),
     ]
-    pygame.draw.polygon(surf, color, head)
-
-    # 尾羽（开口朝左的 V 形五边形）
-    feather = [
-        (cx - L * 0.34, cy - L * 0.08),
-        (cx - L * 0.60, cy - L * 0.30),
-        (cx - L * 0.40, cy),
-        (cx - L * 0.60, cy + L * 0.30),
-        (cx - L * 0.34, cy + L * 0.08),
-    ]
-    pygame.draw.polygon(surf, color, feather)
-
-    return {
-        Direction.RIGHT: surf,
-        Direction.UP: pygame.transform.rotate(surf, 90),
-        Direction.LEFT: pygame.transform.rotate(surf, 180),
-        Direction.DOWN: pygame.transform.rotate(surf, 270),
-    }
+    pygame.draw.polygon(surface, color, points)
 
 
-@functools.lru_cache(maxsize=None)
-def _arrow_set(size, color):
-    """按 (尺寸, 颜色) 缓存旋转好的四方向箭头图像。"""
-    return _build_arrow_set(size, color)
+def draw_segment(surface, centers, direction, color,
+                 width=SEGMENT_WIDTH, head_size=None):
+    """画圆角折线，并在末端（最后一个点）加箭头。
+
+    centers：按“尾端 -> 箭头端”顺序的像素坐标列表。
+    """
+    if head_size is None:
+        head_size = int(width * 1.9)
+
+    # 相邻点逐段画粗直线，节点画圆，拐角圆润、尾端圆头
+    for p1, p2 in zip(centers, centers[1:]):
+        pygame.draw.line(surface, color, p1, p2, width)
+    for point in centers:
+        pygame.draw.circle(surface, color, point, width // 2)
+
+    draw_arrow_head(surface, direction, centers[-1], head_size, color)
 
 
-def draw_arrow(surface, direction, center, size, color):
-    """在 center 处绘制指定方向的箭。"""
-    img = _arrow_set(int(size), color)[direction]
-    surface.blit(img, img.get_rect(center=center))
+def build_segment_surface(centers, direction, color,
+                          width=SEGMENT_WIDTH, padding=None):
+    """把整条线段预渲染到独立透明 Surface（供动画使用）。"""
+    if padding is None:
+        padding = int(width * 1.8)
+
+    xs = [p[0] for p in centers]
+    ys = [p[1] for p in centers]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+
+    w = (maxx - minx) + padding * 2
+    h = (maxy - miny) + padding * 2
+    surf = pygame.Surface((int(w), int(h)), pygame.SRCALPHA)
+    local = [(x - minx + padding, y - miny + padding) for (x, y) in centers]
+    draw_segment(surf, local, direction, color, width)
+    return surf, (minx - padding, miny - padding)

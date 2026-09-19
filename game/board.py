@@ -3,7 +3,8 @@
 线段箭格式见 game/level.py：
 - 每支箭由若干上下左右相邻的格子组成（可拐弯），最后一个格子是箭头端；
 - 棋盘内部用“占据网格”记录每格属于哪支箭；
-- can_fly 沿箭头端方向逐格检查，遇到任何被占据的格子即被挡。
+- 飞出时各节只沿线段自身的路径流动，身体不会横扫，所以能否飞出
+  只取决于箭头端朝向到边界之间有没有其他线段。
 """
 
 import copy
@@ -66,13 +67,18 @@ class Board:
         return self._occ[r][c]
 
     def can_fly_arrow(self, arrow):
-        """判断某支箭沿箭头方向能否无阻挡飞出。"""
+        """箭头沿自身方向到边界之间是否没有其他线段。
+
+        蛇形式滑出时身体只经过自己原来的格子，因此只需检查
+        箭头端射线上是否有别的线段（跳过线段自身）。
+        """
         dr, dc = DIRECTION_DELTA[arrow.direction]
         r, c = arrow.head
         r += dr
         c += dc
         while self.in_bounds(r, c):
-            if self._occ[r][c] is not None:
+            other = self._occ[r][c]
+            if other is not None and other is not arrow:
                 return False
             r += dr
             c += dc
