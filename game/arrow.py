@@ -1,6 +1,8 @@
-"""方向枚举与方向相关映射。"""
+"""方向枚举、方向映射与箭头绘制。"""
 
 from enum import Enum
+
+import pygame
 
 # 空格标记
 EMPTY = "."
@@ -30,3 +32,20 @@ DIRECTION_DELTA = {
     Direction.LEFT: (0, -1),
     Direction.RIGHT: (0, 1),
 }
+
+
+def draw_arrow(surface, direction, center, size, color):
+    """以 center 为中心绘制实心三角形箭头，size 为箭头整体边长。"""
+    cx, cy = center
+    r = size // 2
+
+    if direction == Direction.RIGHT:
+        points = ((cx + r, cy), (cx - r, cy - r), (cx - r, cy + r))
+    elif direction == Direction.LEFT:
+        points = ((cx - r, cy), (cx + r, cy - r), (cx + r, cy + r))
+    elif direction == Direction.UP:
+        points = ((cx, cy - r), (cx - r, cy + r), (cx + r, cy + r))
+    else:  # Direction.DOWN
+        points = ((cx, cy + r), (cx - r, cy - r), (cx + r, cy - r))
+
+    pygame.draw.polygon(surface, color, points)

@@ -24,6 +24,12 @@ class Board:
         self.mistakes = self._max_mistakes
         self._remaining = self._count_arrows()
 
+    @property
+    def max_mistakes(self):
+        """本关失误次数上限（用于界面绘制失误圆点）。"""
+        return self._max_mistakes
+
+
     def _count_arrows(self):
         """统计当前网格中的箭头总数。"""
         return sum(cell != EMPTY for row in self._grid for cell in row)
