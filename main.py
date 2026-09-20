@@ -37,7 +37,7 @@ from game.arrow import (
 from game.board import Board
 from game.generator import random_level as make_random_level
 from game.hud import Hud
-from game.level import LEVELS
+from game.level import LEVELS, TUTORIAL_LEVELS
 from game.level_letters import LEVELS as LETTER_LEVELS
 from game.settings import (
     BOARD_MARGIN_X,
@@ -93,6 +93,12 @@ HOW_TO_PLAY = (
     "清空本关全部线段即通关；红心耗尽或倒计时归零则失败",
 )
 
+# 规则页「进度与设置」面板的正文：说明怎么清空游戏进度。
+PROGRESS_HELP = (
+    "想清空全部游戏进度：进入任意关卡后，点左上角的齿轮（设置）→"
+    "「清空游戏进度」，操作不可恢复，会一并清除已通关记录与金币。",
+)
+
 # 规则页的按键功能表（左列、右列）。改按键就改这里，界面与测试都跟着走。
 # 注意：随机关卡已经挪到开始页的入口按钮上，不再占用字母键。
 KEY_HINTS = (
@@ -112,9 +118,9 @@ RULES_PARA_GAP = 8              # 「怎么玩」三句话之间的额外间距
 RULES_KEY_ROW_H = 46            # 按键功能表行距
 RULES_KEY_COL_W = 286           # 按键功能表的列宽（左列起点 → 右列起点）
 RULES_KEYS_PAD_TOP = 70         # 按键功能表：面板顶边到第一行
-RULES_MODES_H = 196             # 三种玩法面板高度（内容是固定的三行）
+RULES_MODES_H = 236             # 三种玩法面板高度（内容固定四行：入门/基础/字母/随机）
 
-# 开始页的纵向节奏：标题 → 副标题 → 吉祥物 → 四个入口 → 进度卡 → 底部提示。
+# 开始页的纵向节奏：标题 → 副标题 → 吉祥物 → 五个入口 → 底部提示。
 # 吉祥物插进来之后按钮整体下移过一次，这些数字是一组，改一个就要往下看一遍。
 START_TITLE_Y = 168             # 拼装标题的中心 y
 START_SUBTITLE_Y = 246          # 英文副标题的中心 y
@@ -122,8 +128,8 @@ START_SUBTITLE_Y = 246          # 英文副标题的中心 y
 # 排位置要按画出来的尺寸算，不能按这个数字算。
 START_MASCOT_W = 285
 START_MASCOT_Y = 386            # 吉祥物中心 y
-START_BUTTON_Y = (552, 642, 732, 822)
-START_STATS_RECT = (320 - 214, 880, 428, 176)
+# 开始页五个入口：规则介绍 / 入门玩法 / 基础玩法 / 字母玩法 / 随机关卡
+START_BUTTON_Y = (540, 630, 720, 810, 900)
 
 
 def desktop_size():
@@ -230,6 +236,7 @@ class Game:
         # 指着 basic 那份，于是随机关不在列表里、也就不会被记进存档进度。
         self.basic_levels = list(LEVELS)
         self.letter_levels = list(LETTER_LEVELS)
+        self.tutorial_levels = list(TUTORIAL_LEVELS)
         self.levels = self.basic_levels
         self.track = "basic"
         # 这一局是从哪一屏进来的 —— 顶栏靶心按钮据此决定退回哪里
@@ -305,11 +312,14 @@ class Game:
 
         self.hud.zoom_slider.value = (1.0 - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)
 
-        # 开始页的四个入口
-        rules_y, basic_y, letter_y, random_y = START_BUTTON_Y
+        # 开始页的五个入口：规则介绍 / 入门玩法 / 基础玩法 / 字母玩法 / 随机关卡
+        rules_y, tutorial_y, basic_y, letter_y, random_y = START_BUTTON_Y
         self.rules_button = Button((cx, rules_y), (340, 80), "规则介绍",
                                    self.open_rules, self.font_big,
                                    kind="ghost", icon=icons.book)
+        self.tutorial_button = Button((cx, tutorial_y), (340, 80), "入门玩法",
+                                      self.start_tutorial, self.font_big,
+                                      icon=icons.star)
         self.basic_button = Button((cx, basic_y), (340, 80), "基础玩法",
                                    self.open_basic_select, self.font_big,
                                    icon=icons.play)
@@ -319,8 +329,9 @@ class Game:
         self.random_button = Button((cx, random_y), (340, 80), "随机关卡",
                                     self.play_random, self.font_big,
                                     kind="ghost", icon=icons.dice)
-        self.start_buttons = (self.rules_button, self.basic_button,
-                              self.letter_button, self.random_button)
+        self.start_buttons = (self.rules_button, self.tutorial_button,
+                              self.basic_button, self.letter_button,
+                              self.random_button)
         self.rules_home_button = Button((cx, self._rules_layout()["home_y"]),
                                         (216, 60), "返回", self.close_rules,
                                         self.font_normal, kind="ghost")
@@ -490,12 +501,22 @@ class Game:
         """切换当前玩法：self.levels 指向那一份关卡列表。"""
         self.track = track
         self.levels = (self.letter_levels if track == "letter"
+                       else self.tutorial_levels if track == "tutorial"
                        else self.basic_levels)
 
     def start_game(self):
         """从基础玩法的第 1 关直接开一局。"""
         self.use_track("basic")
         self.play_origin = GameState.BASIC_SELECT
+        self.level_index = 0
+        self.level_number = self.levels[0].get("id", 1)
+        self._load_level(self.levels[0])
+        self.state = GameState.PLAYING
+
+    def start_tutorial(self):
+        """从入门玩法的第 1 关直接开一局（独立成线，不跟基础 / 字母关混）。"""
+        self.use_track("tutorial")
+        self.play_origin = GameState.START
         self.level_index = 0
         self.level_number = self.levels[0].get("id", 1)
         self._load_level(self.levels[0])
@@ -1339,8 +1360,6 @@ class Game:
         for button in self.start_buttons:
             button.draw(self.canvas)
 
-        self._draw_start_stats()
-
         self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 · 方向键微调 / 0 复位",
                         self.font_small, pal.text_dim, center=(cx, 1082))
         self._draw_text("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单",
@@ -1367,20 +1386,26 @@ class Game:
     def _start_title_pieces(self, pal):
         """标题「一箭又一箭」拆成五片：两根横条 + 三个字。
 
-        前后两个「一」不写成汉字，直接画成红 / 蓝的圆头横杠（点题），末尾那个
-        「箭」换成绿色收尾 —— 于是整条标题有节奏，不再是一排同色的字。
+        前后两个「一」不写成汉字，直接画成带渐变的红 / 蓝圆头横杠（点题），
+        末尾那个「箭」换成绿色收尾 —— 于是整条标题有节奏，不再是一排同色的字。
+        横杠也加竖向渐变 + 顶部高光，像一根根有光泽的糖果条。
         """
         _width, line_h = self.font_banner.size("箭")
         face = (pal.art_top, pal.art_bottom)
+        bar_a_top = paint.mix(pal.art_bar_a, (255, 255, 255), 0.34)
+        bar_a_bot = paint.mix(pal.art_bar_a, (0, 0, 0), 0.20)
+        bar_b_top = paint.mix(pal.art_bar_b, (255, 255, 255), 0.34)
+        bar_b_bot = paint.mix(pal.art_bar_b, (0, 0, 0), 0.20)
         bar = {
-            "kind": "bar", "width": int(line_h * 1.06),
-            "height": max(10, int(line_h * 0.30)),
+            "kind": "bar",
+            "width": int(line_h * 1.12),
+            "height": max(12, int(line_h * 0.34)),
         }
         return [
-            dict(bar, color=pal.art_bar_a),
+            dict(bar, color=pal.art_bar_a, top=bar_a_top, bottom=bar_a_bot),
             {"kind": "text", "text": "箭", "top": face[0], "bottom": face[1]},
             {"kind": "text", "text": "又", "top": face[0], "bottom": face[1]},
-            dict(bar, color=pal.art_bar_b),
+            dict(bar, color=pal.art_bar_b, top=bar_b_top, bottom=bar_b_bot),
             {"kind": "text", "text": "箭", "top": pal.art_alt_top,
              "bottom": pal.art_alt_bottom},
         ]
@@ -1389,11 +1414,11 @@ class Game:
         """开始页标题的贴图：拼装出来，自然宽度超了就整体等比缩回来。"""
         pal = theme.get()
         banner = paint.art_banner(
-            self.font_banner, self._start_title_pieces(pal), gap=6,
-            outline=pal.art_outline, outline_width=6,
-            outline2=pal.art_edge, outline2_width=3,
-            highlight=pal.art_gloss, shadow=(14, 16, 34),
-            shadow_offset=(0, 8), lift=3)
+            self.font_banner, self._start_title_pieces(pal), gap=8,
+            outline=pal.art_outline, outline_width=7,
+            outline2=pal.art_edge, outline2_width=4,
+            highlight=pal.art_gloss, shadow=(26, 24, 46),
+            shadow_offset=(0, 10), lift=4)
         max_width = WINDOW_WIDTH - 56
         if banner.get_width() > max_width:
             ratio = max_width / banner.get_width()
@@ -1433,34 +1458,6 @@ class Game:
                                                 0.4), upper,
                          border_radius=rect.height // 2)
 
-    def _draw_start_stats(self):
-        """开始页的进度卡：两个玩法各一行，外加累计星与金币。"""
-        pal = theme.get()
-        cx = WINDOW_WIDTH // 2
-        card = pygame.Rect(*START_STATS_RECT)
-        paint.draw_panel(self.canvas, card, 22)
-
-        tracks = (
-            ("基础玩法", self._cleared_count(self.basic_levels),
-             len(self.basic_levels)),
-            ("字母玩法", self._cleared_count(self.letter_levels),
-             len(self.letter_levels)),
-        )
-        for index, (label, done, total) in enumerate(tracks):
-            top = card.top + 30 + index * 62
-            self._draw_text(label, self.font_normal, pal.text,
-                            topleft=(card.left + 26, top))
-            self._draw_text("%d / %d" % (done, total), self.font_normal,
-                            pal.text_gold, topleft=(card.right - 96, top))
-            self._draw_progress_bar(
-                pygame.Rect(card.left + 26, top + 34, card.width - 52, 12),
-                done / max(1, total))
-
-        stars = sum(int(v) for v in self.save.data["stars"].values())
-        self._draw_text("累计 %d 星 · 金币 %d" % (stars, self.coins),
-                        self.font_small, pal.text_dim,
-                        center=(cx, card.bottom - 30))
-
     def _rules_layout(self):
         """规则页的版式（算一次就缓存）。
 
@@ -1499,13 +1496,27 @@ class Game:
             RULES_KEYS_PAD_TOP + 6 + (len(KEY_HINTS) - 1) * RULES_KEY_ROW_H + 32)
         y = keys.bottom + RULES_GAP
         modes = pygame.Rect(left, y, width, RULES_MODES_H)
-        y = modes.bottom + 34
+        y = modes.bottom + RULES_GAP
+        prog_lines, prog_tops = [], []
+        poff = 60
+        for sentence in PROGRESS_HELP:
+            if prog_lines:
+                poff += RULES_PARA_GAP
+            for line in paint.wrap_text(self.font_normal, sentence, inner):
+                prog_lines.append(line)
+                prog_tops.append(poff)
+                poff += RULES_LINE_H
+        progress = pygame.Rect(left, y, width, poff + 14)
+        y = progress.bottom + 34
         return {
             "how": how,
             "how_lines": how_lines,
             "how_tops": how_tops,
             "keys": keys,
             "modes": modes,
+            "progress": progress,
+            "progress_lines": prog_lines,
+            "progress_tops": prog_tops,
             "note_y": y,
             "home_y": y + 54,
             "esc_y": y + 106,
@@ -1548,12 +1559,13 @@ class Game:
                     keys.top + RULES_KEYS_PAD_TOP + row_index * RULES_KEY_ROW_H,
                     item[0], item[1], avail)
 
-        # ---- 三种玩法 ----
+        # ---- 四种玩法 ----
         modes = layout["modes"]
         paint.draw_panel(self.canvas, modes, 22)
-        self._draw_text("三种玩法", self.font_big, pal.text_gold,
+        self._draw_text("四种玩法", self.font_big, pal.text_gold,
                         topleft=(modes.left + RULES_MARGIN, modes.top + 18))
         lines = (
+            (icons.star, "入门玩法", "3 关单格箭，从零开始练手"),
             (icons.play, "基础玩法", "12 关，从小盘到大盘，难度一路递增"),
             (icons.letter_a, "字母玩法", "26 个字母各一关，整盘铺成一个字母"),
             (icons.dice, "随机关卡", "随机造型现场生成，每次都不一样"),
@@ -1565,6 +1577,17 @@ class Game:
                             topleft=(modes.left + 60, y - 14))
             self._draw_text(desc, self.font_small, pal.text_dim,
                             topleft=(modes.left + 176, y - 10))
+
+        # ---- 进度与设置 ----
+        progress = layout["progress"]
+        paint.draw_panel(self.canvas, progress, 22)
+        self._draw_text("进度与设置", self.font_big, pal.text_gold,
+                        topleft=(progress.left + RULES_MARGIN,
+                                 progress.top + 18))
+        for line, top in zip(layout["progress_lines"], layout["progress_tops"]):
+            self._draw_text(line, self.font_normal, pal.text_dim,
+                            topleft=(progress.left + RULES_MARGIN,
+                                     progress.top + top))
 
         self._draw_text("以上玩法都从开始页的按钮进入", self.font_small,
                         pal.text_dim, center=(cx, layout["note_y"]))

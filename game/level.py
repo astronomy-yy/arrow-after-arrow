@@ -533,6 +533,68 @@ LEVELS = [
 ]
 
 
+# 入门玩法：3 关，每支箭都是「单格箭」（cells 只占一格），专门给新手练手。
+# 单格箭只沿自身那格、再按 dir 飞出，棋盘逻辑（can_fly_arrow）只看箭头端
+# 射线上有没有别的线段，所以整关极好读懂。三关难度递进：
+#   入门 1：三箭全都立刻能飞（无任何阻挡），先熟悉「点箭即飞」；
+#   入门 2：一排三箭形成一条阻挡链，得按从右到左的顺序点；
+#   入门 3：两条阻挡链 + 一支自由箭，练「先清挡路的再清被挡的」。
+# ids 用 101/102/103，避开基础关（1~12）与字母关，互不冲突。
+TUTORIAL_LEVELS = [
+    {
+        'id': 101,
+        'name': '入门 1 点箭即飞',
+        'shape': 'rect',
+        'mistakes': 5,
+        'rows': 9,
+        'cols': 13,
+        'seed': 101001,
+        'time_limit': 300,
+        'arrows': [
+            {'cells': [[2, 1]], 'dir': 'R', 'color': 4},
+            {'cells': [[4, 11]], 'dir': 'L', 'color': 6},
+            {'cells': [[6, 6]], 'dir': 'U', 'color': 2},
+        ],
+        'solution': [0, 1, 2],
+    },
+    {
+        'id': 102,
+        'name': '入门 2 先来后到',
+        'shape': 'rect',
+        'mistakes': 5,
+        'rows': 9,
+        'cols': 13,
+        'seed': 102002,
+        'time_limit': 300,
+        'arrows': [
+            {'cells': [[4, 1]], 'dir': 'R', 'color': 4},
+            {'cells': [[4, 5]], 'dir': 'R', 'color': 6},
+            {'cells': [[4, 9]], 'dir': 'R', 'color': 2},
+            {'cells': [[1, 6]], 'dir': 'D', 'color': 8},
+        ],
+        'solution': [2, 1, 0, 3],
+    },
+    {
+        'id': 103,
+        'name': '入门 3 双线齐发',
+        'shape': 'rect',
+        'mistakes': 5,
+        'rows': 11,
+        'cols': 15,
+        'seed': 103003,
+        'time_limit': 320,
+        'arrows': [
+            {'cells': [[2, 1]], 'dir': 'R', 'color': 4},
+            {'cells': [[2, 7]], 'dir': 'R', 'color': 6},
+            {'cells': [[6, 1]], 'dir': 'R', 'color': 2},
+            {'cells': [[6, 7]], 'dir': 'R', 'color': 8},
+            {'cells': [[0, 12]], 'dir': 'D', 'color': 1},
+        ],
+        'solution': [1, 0, 3, 2, 4],
+    },
+]
+
+
 SHAPE_LABELS = {
     'rect': '方形', 'round': '圆形', 'diamond': '菱形',
     'heart': '心形', 'triangle': '三角', 'cross': '十字',
