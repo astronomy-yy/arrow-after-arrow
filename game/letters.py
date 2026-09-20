@@ -206,7 +206,9 @@ PATTERN_COLS = 5
 PATTERN_ROWS = 7
 
 # 字模 -> 棋盘的放大倍数与四周留白（都给一致的值，26 关的棋盘尺寸相同）
-DEFAULT_SCALE = 2
+# scale=3 时棋盘是 23 行 × 17 列：每个笔画像素展开成 3×3 的方块，字母的
+# 弧线与斜笔（C、S、J、Q）比 scale=2 平滑得多，盘面格子数也从 192 涨到 391。
+DEFAULT_SCALE = 3
 DEFAULT_MARGIN = 1
 
 LETTERS = tuple(sorted(LETTER_PATTERNS))

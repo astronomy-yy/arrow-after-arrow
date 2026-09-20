@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """字母关卡生成脚本：用 game/generator.py 的逆向构造法重写 game/level_letters.py。
 
-26 个字母各一关，棋盘都是 16x12：字模（game/letters.py 的 5×7 点阵）
-按 scale=2 放大、四周留一圈空边，线段只铺在字母的笔画里。
+26 个字母各一关，棋盘统一 23x17：字模（game/letters.py 的 5×7 点阵）
+按 scale=3 放大、四周留一圈空边，线段只铺在字母的笔画里。
 
 难度也是一条爬升曲线：A 开局四成左右的箭能直接飞（给新手留够容错），
 到 Z 压到三成以下（大部分箭都被别的箭压住，得先理出先后）。
@@ -26,18 +26,20 @@ from game import letters as L                                   # noqa: E402
 from game.board import Board                                    # noqa: E402
 from game.solver import solve                                   # noqa: E402
 
-TIME_LIMIT = 210
+TIME_LIMIT = 300
 MISTAKES = 3
 ATTEMPTS = 200
-MAX_PIECE = 14          # 一支箭最多几格（笔画窄，太长了会把整条笔画一口吞掉）
+# 一支箭最多几格。笔画本身不宽，但棋盘从 16x12 加密到 23x17 之后格子多了
+# 一倍，max_piece 太小会留下一串填不上的空洞（填充率掉、颜色也碎）。
+MAX_PIECE = 20
 
 RAY_PREF_START, RAY_PREF_END = 0.45, 0.90
 MAX_FREE_START, MAX_FREE_END = 0.58, 0.30
 
 HEADER = '''"""字母关卡数据（由 tools/generate_letters.py 用「逆向构造法」生成）。
 
-26 个字母各一关，棋盘统一 16x12：把 game/letters.py 的 5×7 点阵字模按
-scale=2 放大，线段只铺在字母的笔画里，于是整盘看着就是那个大写字母。
+26 个字母各一关，棋盘统一 23x17：把 game/letters.py 的 5×7 点阵字模按
+scale=3 放大，线段只铺在字母的笔画里，于是整盘看着就是那个大写字母。
 
 - letter：这一关铺的是哪个字母；
 - shape 恒为 "letter"，遮罩由点阵字模栅格化而来（辅助线点阵也只画在

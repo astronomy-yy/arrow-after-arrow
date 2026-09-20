@@ -112,3 +112,32 @@ def test_difficulty_helpers():
                                                for a in level["arrows"])
     assert generator.difficulty(level) > 0
     assert generator.difficulty({"arrows": []}) == 0
+
+
+# ---------- 棋盘密度 ----------
+
+def test_basic_levels_use_the_denser_grid():
+    """基础 12 关的棋盘整体加密过一轮（约 1.4 倍），别退回旧尺寸。
+
+    旧尺寸是 11x11 ~ 18x13（遮罩 84 ~ 234 格），
+    现在是 16x16 ~ 25x19（遮罩 155 ~ 475 格）。箭数随遮罩水涨船高，
+    但造型之间浮动很大（十字只有十几支、满盘矩形五十多支），所以钉不死，
+    这里只钉尺寸与格子数。
+    """
+    from game.level import LEVELS
+
+    for level in LEVELS:
+        mask = cells_of(level["rows"], level["cols"],
+                        level.get("shape", "rect"))
+        assert level["rows"] >= 16, level["name"]
+        assert level["cols"] >= 13, level["name"]
+        assert len(mask) >= 150, (level["name"], len(mask))
+        assert len(level["arrows"]) >= 12, level["name"]
+
+
+def test_random_levels_also_use_the_denser_grid():
+    """随机关卡的尺寸表也跟着放大了，不然从开始页随机进去还是老盘面。"""
+    for shape, rows, cols in generator.RANDOM_SHAPES:
+        assert rows >= 16, (rows, cols)
+        assert cols >= 13, (rows, cols)
+        assert len(cells_of(rows, cols, shape)) >= 150, (shape, rows, cols)

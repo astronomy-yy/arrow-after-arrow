@@ -199,18 +199,22 @@ def ascii_preview(cells, rows, cols):
 
 
 def suggested_size(shape, index_hint=0):
-    """给每个形状挑一个比较好看的棋盘尺寸。"""
+    """给每个形状挑一个比较好看的棋盘尺寸。
+
+    尺寸比早期版本整体放大了约 1.4 倍（格子更密、线更细），与
+    ``tools/generate_levels.py`` 里 PLAN 用的尺寸保持一致。
+    """
     table = {
-        "rect": (12, 9),
-        "round": (15, 15),
-        "diamond": (15, 15),
-        "heart": (15, 15),
-        "triangle": (14, 15),
-        "cross": (15, 15),
-        "hourglass": (16, 13),
-        "ring": (15, 15),
+        "rect": (17, 13),
+        "round": (16, 16),
+        "diamond": (18, 18),
+        "heart": (18, 18),
+        "triangle": (17, 18),
+        "cross": (18, 18),
+        "hourglass": (20, 17),
+        "ring": (21, 21),
     }
-    return table.get(shape, (12, 9))
+    return table.get(shape, (17, 13))
 
 
 def area(cells):

@@ -82,6 +82,17 @@ def test_board_size_is_rows_then_cols():
     assert (rows, cols) == (21, 15)
 
 
+def test_default_board_size_is_23x17():
+    """默认棋盘密度钉在这里：scale=3、margin=1 → 23 行 × 17 列。
+
+    棋盘整体加密过一轮（16×12 → 23×17，格子数 192 → 391）。把数字写死是
+    为了下次动 scale 时必须是有意的：它同时影响 26 关的生成脚本与关卡数据。
+    """
+    assert letters.DEFAULT_SCALE == 3
+    assert letters.board_size() == (23, 17)
+    assert letters.board_size()[0] * letters.board_size()[1] == 391
+
+
 def test_cells_of_accepts_letter_shape():
     rows, cols = letters.board_size()
     mask = cells_of(rows, cols, "letter", "B")
@@ -100,8 +111,9 @@ def test_is_connected_diagonal_option():
 
 
 def test_level_cells_uses_the_letter():
-    level = {"rows": 16, "cols": 12, "shape": "letter", "letter": "C"}
-    assert level_cells(level) == letters.letter_cells(16, 12, "C")
+    rows, cols = letters.board_size()
+    level = {"rows": rows, "cols": cols, "shape": "letter", "letter": "C"}
+    assert level_cells(level) == letters.letter_cells(rows, cols, "C")
     plain = {"rows": 4, "cols": 5, "shape": "rect"}
     assert len(level_cells(plain)) == 20
 

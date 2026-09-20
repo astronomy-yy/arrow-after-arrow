@@ -30,20 +30,31 @@ from game.shapes import cells_of, is_connected                  # noqa: E402
 from game.solver import solve                                   # noqa: E402
 
 # (名字, 形状, 行, 列, 种子, 时限秒, ray_pref, 开局可飞上限)
+# 棋盘尺寸比早期版本整体放大了约 1.4 倍：格子更密（画面里格子更多、线更细），
+# 每关的箭数也随之上升，所以时限按「箭数 × 约 6 秒 + 余量」重新给了一遍。
 PLAN = [
-    ("第1关 初露锋芒", "rect", 12, 9, 1101021, 240, 0.35, 0.78),
-    ("第2关 渐入佳境", "rect", 13, 10, 2202024, 260, 0.50, 0.65),
-    ("第3关 圆转如意", "round", 11, 11, 3303008, 240, 0.58, 0.56),
-    ("第4关 菱光乍现", "diamond", 13, 13, 4404016, 260, 0.64, 0.50),
-    ("第5关 十字路口", "cross", 13, 13, 5505032, 260, 0.70, 0.46),
-    ("第6关 心之所向", "heart", 13, 13, 6606048, 260, 0.76, 0.42),
-    ("第7关 长街深巷", "rect", 15, 11, 7707056, 300, 0.82, 0.38),
-    ("第8关 步步登高", "triangle", 12, 13, 8808064, 280, 0.88, 0.34),
-    ("第9关 大盘如月", "round", 15, 15, 9909072, 320, 0.92, 0.30),
-    ("第10关 沙漏流转", "hourglass", 14, 12, 11101088, 300, 0.96, 0.27),
-    ("第11关 环环相扣", "ring", 15, 15, 12121104, 320, 0.98, 0.24),
-    ("第12关 满盘皆兵", "rect", 18, 13, 13131200, 360, 1.00, 0.20),
+    ("第1关 初露锋芒", "rect", 17, 13, 1101021, 300, 0.35, 0.78),
+    ("第2关 渐入佳境", "rect", 18, 14, 2202024, 320, 0.50, 0.65),
+    ("第3关 圆转如意", "round", 16, 16, 3303008, 320, 0.58, 0.56),
+    ("第4关 菱光乍现", "diamond", 18, 18, 4404016, 360, 0.64, 0.50),
+    ("第5关 十字路口", "cross", 18, 18, 5505032, 360, 0.70, 0.46),
+    ("第6关 心之所向", "heart", 18, 18, 6606048, 360, 0.76, 0.42),
+    ("第7关 长街深巷", "rect", 21, 15, 7707056, 380, 0.82, 0.38),
+    ("第8关 步步登高", "triangle", 17, 18, 8808064, 380, 0.88, 0.34),
+    ("第9关 大盘如月", "round", 21, 21, 9909072, 460, 0.92, 0.30),
+    ("第10关 沙漏流转", "hourglass", 20, 17, 11101088, 420, 0.96, 0.27),
+    ("第11关 环环相扣", "ring", 21, 21, 12121104, 460, 0.98, 0.24),
+    ("第12关 满盘皆兵", "rect", 25, 19, 13131200, 520, 1.00, 0.20),
 ]
+
+# 上一关的实际可飞占比要再往下压这么多，才算「这一关更难」
+FREE_MARGIN = 0.004
+# 上限压下去之后同一个种子不一定够得到，换这几个种子再试。
+# 一个种子既满足上限、又铺到这个填充率，就收工（省得每个种子都跑一遍）。
+GOOD_FILL = 0.92
+SEED_STEP = 100003
+RETRY_TRIES = 6
+RETRY_ATTEMPTS = 160
 
 HEADER = '''"""关卡数据（由 tools/generate_levels.py 用「逆向构造法」生成）。
 
@@ -74,31 +85,76 @@ HEADER = '''"""关卡数据（由 tools/generate_levels.py 用「逆向构造法
 '''
 
 
-def build_one(index):
-    name, shape, rows, cols, seed, limit, ray_pref, max_free = PLAN[index]
-    t0 = time.time()
-    style = dict(G.DEFAULT_STYLE, ray_pref=ray_pref)
-    # 大造型的方差大，靠多随机重启挑「满足难度约束又最满」的一版
-    level = G.build_level(rows, cols, shape, seed, name=name, mistakes=3,
-                          time_limit=limit, max_attempts=240,
-                          style=style, max_free=max_free)
-    if level is None:
-        raise SystemExit(f"第 {index + 1} 关生成失败：{shape} {rows}x{cols}")
-    level["id"] = index + 1
+def build_one(index, prev_free=None):
+    """生成第 index 关。
 
-    stats = G.board_stats(level)
-    order = solve(Board(level))
-    if order is None:
-        raise SystemExit(f"第 {index + 1} 关求解器解不开，已丢弃")
+    ``prev_free`` 是上一关**实际**的开局可飞占比。只靠 PLAN 里的上限压不住
+    回升：每一关都在自己的上限内独立挑「铺得最满」的一版，实际值可能比上一关
+    还高（上限 0.78 拿到 0.62，下一关上限 0.65 却拿到 0.64）。所以这里把上限
+    再压到「上一关实际值 - FREE_MARGIN」以下。
+
+    压下去之后还有两个坑：**同一个种子未必够得到那个上限**，而且够到了也可能
+    铺得很稀。不同造型的可飞占比下限差得很远（环形 21x21 用原种子只能到 14.6%，
+    换种子能到 10.8%），所以上限没满足、或者满足了但填充率不到 ``GOOD_FILL``，
+    就换个种子再来一遍，取「满足上限里铺得最满」的那一版。
+    """
+    name, shape, rows, cols, seed, limit, ray_pref, max_free = PLAN[index]
+    if prev_free is not None:
+        max_free = min(max_free, prev_free - FREE_MARGIN)
+
+    style = dict(G.DEFAULT_STYLE, ray_pref=ray_pref)
+    t0 = time.time()
+    best = None                 # (是否满足上限, 填充率, level, stats, seed)
+    tried = 0
+
+    for attempt in range(RETRY_TRIES):
+        use_seed = seed + attempt * SEED_STEP
+        tried += 1
+        level = G.build_level(rows, cols, shape, use_seed, name=name,
+                              mistakes=3, time_limit=limit,
+                              max_attempts=240 if attempt == 0
+                              else RETRY_ATTEMPTS,
+                              style=style, max_free=max_free)
+        if level is None or solve(Board(level)) is None:
+            continue
+        stats = G.board_stats(level)
+        fits = stats["free_ratio"] <= max_free + 1e-9
+        score = (fits, G.fill_ratio(level))
+        if best is None or score > best[0]:
+            best = (score, level, stats, use_seed)
+        if fits and G.fill_ratio(level) >= GOOD_FILL:
+            break
+
+    if best is None:
+        raise SystemExit(f"第 {index + 1} 关生成失败：{shape} {rows}x{cols}")
+
+    _, level, stats, use_seed = best
+    level["id"] = index + 1
+    if not best[0][0]:
+        print(f"  ! 第 {index + 1} 关换了 {tried} 个种子仍没压到 "
+              f"可飞上限 {max_free:.2f}（实际 {stats['free_ratio']:.3f}）")
 
     print(f"  {name:12s} {shape:10s} {rows:2d}x{cols:2d} "
           f"箭数={stats['arrows']:3d} "
           f"填充率={G.fill_ratio(level):.3f} "
+          f"可飞上限={max_free:.2f} "
           f"开局可飞={stats['free']:2d}({stats['free_ratio']:.0%}) "
           f"被挡={stats['blocked_ratio']:.0%} "
           f"平均挡者={stats['avg_blockers']:.2f} "
+          f"种子={use_seed} "
           f"难度={G.difficulty(level):5.1f} 耗时={time.time() - t0:.1f}s")
     return level
+
+
+def build_all():
+    """顺序生成 12 关，每一关的可飞上限都跟着上一关的实际值压下去。"""
+    levels = []
+    prev_free = None
+    for index in range(len(PLAN)):
+        level = build_one(index, prev_free)
+        levels.append(level)
+        prev_free = G.board_stats(level)["free_ratio"]
+    return levels
 
 
 def dump(levels, path):
@@ -190,7 +246,17 @@ def check(levels):
               f"箭数={stats['arrows']:>3} 被挡={stats['blocked_ratio']:.0%} "
               f"开局可飞={stats['free']:>2}/{stats['arrows']}")
         ok = ok and connected and solution_ok and solver_ok and blocked_ok
-    return ok
+
+    # 难度曲线：开局可飞占比不许回升（tests/test_blocking.py 也钉了这条）
+    ratios = [G.board_stats(level)["free_ratio"] for level in levels]
+    rising = [(index, ratios[index - 1], ratios[index])
+              for index in range(1, len(ratios))
+              if ratios[index] > ratios[index - 1] + 1e-9]
+    curve_ok = not rising
+    print(f"  [{'OK ' if curve_ok else 'BAD'}] 难度曲线 "
+          f"{'严格不回升' if curve_ok else '出现回升 %s' % rising}："
+          + " → ".join(f"{r:.0%}" for r in ratios))
+    return ok and curve_ok
 
 
 def main():
@@ -212,11 +278,13 @@ def main():
         only = int(args[0]) - 1
         from game.level import LEVELS
         levels = list(LEVELS)
+        # 用上一关的实际值压住上限；下一关的约束由 check() 的难度曲线把关
+        prev = (G.board_stats(levels[only - 1])["free_ratio"] if only else None)
         print(f"重新生成第 {only + 1} 关：")
-        levels[only] = build_one(only)
+        levels[only] = build_one(only, prev)
     else:
         print("生成全部关卡：")
-        levels = [build_one(i) for i in range(len(PLAN))]
+        levels = build_all()
 
     dump(levels, target)
     print("\n难度表：")

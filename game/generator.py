@@ -321,10 +321,10 @@ def fill_ratio(level):
 # --------------------------------------------------------------------------
 
 RANDOM_SHAPES = [
-    ("round", 13, 13), ("round", 15, 15), ("diamond", 13, 13),
-    ("heart", 13, 13), ("heart", 15, 15), ("cross", 13, 13),
-    ("rect", 12, 9), ("rect", 14, 10), ("hourglass", 14, 12),
-    ("triangle", 12, 13), ("ring", 15, 15), ("round", 11, 11),
+    ("round", 18, 18), ("round", 21, 21), ("diamond", 18, 18),
+    ("heart", 18, 18), ("heart", 21, 21), ("cross", 18, 18),
+    ("rect", 17, 13), ("rect", 20, 14), ("hourglass", 20, 17),
+    ("triangle", 17, 18), ("ring", 21, 21), ("round", 16, 16),
 ]
 
 
@@ -344,7 +344,7 @@ def random_level(seed=None, palette_size=10, max_free=0.45):
         if level:
             level["random"] = True
             return level
-    return build_level(10, 8, "rect", rng.randrange(1 << 30),
+    return build_level(14, 11, "rect", rng.randrange(1 << 30),
                        name="随机关卡", max_attempts=60, max_free=max_free)
 
 
