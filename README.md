@@ -37,7 +37,7 @@ python main.py
 | 滚轮 | 缩放棋盘，锚在鼠标指的位置上 |
 | 方向键 / `+` `-` / `0` | 平移微调 / 缩放 / 复位视图 |
 | 左键点击空格 | 无惩罚 |
-| 顶部齿轮 | 打开设置（音效、重置进度） |
+| 顶部齿轮 | 打开设置（音效、辅助线、日夜主题、清空游戏进度） |
 | 顶部拨杆 · `T` · 规则页按键表里的那个小拨杆 | 日间 / 夜间主题切换，立即生效并存档（`T` 在任何界面都认） |
 | 顶部「剩余 N」 | 本关还剩几支箭没飞（在倒计时左边） |
 | 顶部环形箭头 | 重新开始本关：盘面 / 红心 / 倒计时一起回到开局（在倒计时右边） |
@@ -78,7 +78,8 @@ python main.py
 - **棋盘密度**：基础玩法是 16×13 ~ 25×21（造型遮罩 155 ~ 475 格），字母玩法统一
   23×17（391 格，笔画遮罩 90 ~ 180 格）。默认缩放下基础关格子边长 24 ~ 40 px、
   字母关统一 30 px —— 盘面比早期版本密了一档，格子小了约三成，线段更细、造型更精细。
-- 盘面填充率普遍在 **0.92 ~ 0.97**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的飞行通道）。
+- 盘面填充率普遍在 **0.93 ~ 0.97**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的
+  飞行通道）；字母关更满一档，最满的 L / U 一格不空（1.00）。
 - **随机关卡**：从开始页的「随机关卡」进去，用同一套生成器现场生成一关（造型、尺寸
   都随机），不写入存档进度。游戏中按 `Esc` 打开菜单也能看规则与当前玩法的选关页。
 - **AI 求解**：`game/solver.py` 把「谁挡谁」建成有向图做**拓扑排序**，O(n²) 精确判定，
@@ -147,7 +148,7 @@ arrow-after-arrow/
 │                              #   缩放拖动 / 动效 / 线段渲染 / 界面观感 / 字母玩法 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
-│   └── test-record.md         # T01–T22 测试记录
+│   └── test-record.md         # T01–T23 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -164,7 +165,7 @@ python tools/generate_levels.py --stats  # 打印 12 关的难度表
 python tools/generate_letters.py A B   # 重新生成字母玩法里指定的几个字母
 python tools/generate_letters.py --check # 校验 26 个字母关（连通 / 可解 / 有阻挡）
 python tools/generate_letters.py --stats # 打印 26 个字母关的难度表
-python tools/screenshot.py             # 重新导出 README 用的 26 张截图
+python tools/screenshot.py             # 重新导出 assets/screenshots/ 下的 26 张截图
 python tools/perf_bench.py             # 打印各界面 × 日夜主题的整帧耗时
 ```
 
@@ -174,13 +175,9 @@ python tools/perf_bench.py             # 打印各界面 × 日夜主题的整�
 |---|---|
 | ![开始](assets/screenshots/start.png) | ![规则](assets/screenshots/rules.png) |
 
-| 入门玩法选关（3 关，关号 1 / 2 / 3） | 入门第 1 关（30 支单格箭铺满 62% 的格子） |
+| 入门玩法选关（3 关，关号 1 / 2 / 3） | 入门第 1 关（30 支单格箭随机散铺，占 62% 的格子） |
 |---|---|
 | ![入门选关](assets/screenshots/tutorial_select.png) | ![入门盘面](assets/screenshots/playing_tutorial1.png) |
-
-| 入门第 2 关（35 支散铺，四个方向都散得开） | 入门第 3 关（48 支，密度最高、开局可飞最少） |
-|---|---|
-| ![入门2](assets/screenshots/playing_tutorial2.png) | ![入门3](assets/screenshots/playing_tutorial3.png) |
 
 | 字母玩法选关（26 个字母） | 字母关盘面（整盘铺成一个字母 M） |
 |---|---|
