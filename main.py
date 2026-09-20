@@ -10,8 +10,8 @@
 随机关卡（随机造型，每次都不一样）。
 
 扩展功能：AI 求解、提示、撤销、倒计时星级、关卡选择、随机关卡、存档、音效。
-快捷键：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单与返回
-（随机关卡从开始页进入，不再占用字母键）。
+快捷键：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / T 切换日夜主题 / Esc 菜单与返回
+（随机关卡从开始页进入，不再占用字母键；T 在任何界面都认）。
 视图操作：放大后按住棋盘拖动（左键拖过 DRAG_THRESHOLD 即判为拖动，不会误点飞
 线段）、中键或右键直接拖、滚轮缩放、方向键微调、0 键复位。
 """
@@ -69,7 +69,7 @@ from game.shapes import level_cells
 from game.solver import solve
 from game.states import GameState
 from game.storage import Save
-from game.ui import Button, IconButton, MenuPanel
+from game.ui import Button, IconButton, MenuPanel, ToggleSwitch
 
 MOUSE_EVENTS = (
     pygame.MOUSEMOTION,
@@ -99,6 +99,10 @@ PROGRESS_HELP = (
     "「清空游戏进度」，操作不可恢复，会一并清除已通关记录与金币。",
 )
 
+# 日夜主题的快捷键。提成常量是因为它有两个消费者：规则页的按键表要把它印出来，
+# `_handle_key` 要按它分发 —— 两处各写一遍字母，早晚会「表上写 T、实际认别的键」。
+THEME_KEY = "T"
+
 # 规则页的按键功能表（左列、右列）。改按键就改这里，界面与测试都跟着走。
 # 注意：随机关卡已经挪到开始页的入口按钮上，不再占用字母键。
 KEY_HINTS = (
@@ -106,7 +110,22 @@ KEY_HINTS = (
     (("H", "提示一步（消耗金币）"), ("拖动", "放大后按住棋盘拖动")),
     (("A", "AI 自动求解本关"), ("方向键", "微调棋盘位置")),
     (("G", "显示 / 隐藏辅助线"), ("0", "复位缩放与位置")),
-    (("Esc", "打开菜单 / 返回上一级"), None),
+    (("Esc", "打开菜单 / 返回上一级"), (THEME_KEY, "切换日夜主题")),
+)
+
+# 日夜那一行在表里的行号：那行右侧要摆一个真能点的拨杆，位置按行号算。
+# 不写死 4 是因为前面插一行就会让拨杆飞到别的行上（同样不报错，只是错位）。
+THEME_HINT_ROW = next(index for index, row in enumerate(KEY_HINTS)
+                      if any(item is not None and item[0] == THEME_KEY
+                             for item in row))
+
+# 开始页底部的两行操作提示（文字 + 中心 y）。提成常量是因为这两行是**居中**
+# 画的，而它们只会越来越长（加一个键就长一截）—— 太长就会顶到画面边上，
+# 而那种溢出同样不报错。测试直接量这两行的宽度。
+START_HINTS = (
+    ("放大后按住棋盘拖动 / 滚轮或滑杆缩放 · 方向键微调 / 0 复位", 1082),
+    ("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / T 日夜主题 / Esc 菜单",
+     1112),
 )
 
 # 规则页「四种玩法」那四行：图标 + 名字 + 一句话说明。
@@ -137,6 +156,14 @@ RULES_KEY_ROW_H = 38            # 按键功能表行距
 RULES_KEY_CAP_H = 32            # 按键胶囊高度（第一行胶囊的顶边落在题头带下沿）
 RULES_KEY_COL_W = 286           # 按键功能表的列宽（左列起点 → 右列起点）
 RULES_MODES_ROW_H = 36          # 四种玩法表行距
+# 按键功能表「T 切换日夜主题」那一行右侧的拨杆尺寸与它和说明文字之间的最小间距。
+# 跟顶栏那只是同一个控件，只是缩了一号：表格行高才 38 px。这两条一起决定了
+# 这一行的说明能写多长 —— 「切换日夜主题」量出来 108 px，刚好在 116 px 之内。
+RULES_THEME_SWITCH_SIZE = (52, 26)
+RULES_THEME_SWITCH_GAP = 12
+# 这一行的说明文字一共要让出多少宽度给它（拨杆 + 间距）
+RULES_THEME_SWITCH_ROOM = (RULES_THEME_SWITCH_SIZE[0]
+                           + RULES_THEME_SWITCH_GAP)
 RULES_BOTTOM_PAD = 18           # 最后一行文字距窗口底边的安全余量
 # 整页塞不下时逐档收紧的旋钮：(名字, 初值, 下限)。每一步七个旋钮各缩 1 px，
 # 缩到「最后一行离底边还有 RULES_BOTTOM_PAD」就停；到底的旋钮不再往下拧。
@@ -370,6 +397,10 @@ class Game:
         self.rules_home_button = Button((cx, self._rules_layout()["home_y"]),
                                         (216, 60), "返回", self.close_rules,
                                         self.font_normal, kind="ghost")
+        # 规则页「按键功能」表里日夜那一行右侧的拨杆：跟顶栏是同一个控件。
+        # 位置每帧按版式摆（见 _draw_rules），这里先建个空壳出来。
+        self.rules_theme_switch = ToggleSwitch(
+            (0, 0), RULES_THEME_SWITCH_SIZE, self.on_theme_change)
         self.next_button = Button((cx - 128, 672), (200, 56), "下一关",
                                   self.next_level, self.font_normal)
         self.retry_button = Button((cx - 128, 672), (216, 56), "重新开始",
@@ -736,12 +767,18 @@ class Game:
             on_close=self.close_menu,
         )
 
-    def on_theme_change(self):
-        """拨杆被点，或按快捷键：切主题并存档。"""
+    def on_theme_change(self, close_menu=True):
+        """拨杆被点，或按 T 键：切主题并存档。
+
+        ``close_menu`` 只有设置面板里那一条才用得上（点完菜单项顺手收起面板）。
+        按快捷键时不收 —— 菜单多半是在对局中打开的，正看着棋盘换配色，不该
+        顺手把菜单也合上。
+        """
         theme.toggle()
         self.save.data["theme"] = theme.get().name
         self.save.flush()
-        self.menu = None
+        if close_menu:
+            self.menu = None
 
     # 快捷键走同一条路
     toggle_theme = on_theme_change
@@ -1123,6 +1160,11 @@ class Game:
             else:
                 self.back_home()
             return
+        # 日夜主题的快捷键在**任何界面**都认：规则页上正印着这一条，玩家十有
+        # 八九就是在那儿按的 —— 按下去整页翻面，才验得出来它真的生效了。
+        if key == pygame.K_t:
+            self.on_theme_change(close_menu=False)
+            return
         if self.state != GameState.PLAYING:
             return
         if key == pygame.K_u:
@@ -1167,6 +1209,7 @@ class Game:
             return
         if self.state == GameState.RULES:
             self.rules_home_button.handle_event(event)
+            self.rules_theme_switch.handle_event(event)
             return
         if self.state == GameState.TUTORIAL_SELECT:
             self.back_button.handle_event(event)
@@ -1425,10 +1468,8 @@ class Game:
         for button in self.start_buttons:
             button.draw(self.canvas)
 
-        self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 · 方向键微调 / 0 复位",
-                        self.font_small, pal.text_dim, center=(cx, 1082))
-        self._draw_text("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单",
-                        self.font_small, pal.text_dim, center=(cx, 1112))
+        for text, y in START_HINTS:
+            self._draw_text(text, self.font_small, pal.text_dim, center=(cx, y))
 
     def _draw_start_mascot(self):
         """标题下方那只卡通箭（参考图里的吉祥物）。
@@ -1666,6 +1707,8 @@ class Game:
                         topleft=(keys.left + RULES_MARGIN,
                                  keys.top + title_pad))
         for row_index, row in enumerate(KEY_HINTS):
+            row_y = (keys.top + head + RULES_KEY_CAP_H // 2
+                     + row_index * layout["key_row_h"])
             for col_index, item in enumerate(row):
                 if item is None:
                     continue
@@ -1673,11 +1716,18 @@ class Game:
                 # 右列不许越过面板内边距，说明文字按这个余量折行
                 avail = min(RULES_KEY_COL_W,
                             keys.right - RULES_MARGIN - x)
-                self._draw_key_hint(
-                    x,
-                    keys.top + head + RULES_KEY_CAP_H // 2
-                    + row_index * layout["key_row_h"],
-                    item[0], item[1], avail)
+                if item[0] == THEME_KEY:
+                    # 这一格右边还站着个拨杆，说明文字得给它让位 —— 不让的话
+                    # 「主题」两个字会被压在拨杆底下（同样不报错，只是看不见）
+                    avail -= RULES_THEME_SWITCH_ROOM
+                self._draw_key_hint(x, row_y, item[0], item[1], avail)
+            if row_index == THEME_HINT_ROW:
+                # 只印一句「T 切换日夜主题」的话，玩家得先记住按键、再跑到别处
+                # 去试；在这儿直接摆一个能点的拨杆，点一下就看见整页翻面。
+                self.rules_theme_switch.rect.center = (
+                    keys.right - RULES_MARGIN
+                    - self.rules_theme_switch.rect.width // 2, row_y)
+                self.rules_theme_switch.draw(self.canvas)
 
         # ---- 四种玩法 ----
         modes = layout["modes"]

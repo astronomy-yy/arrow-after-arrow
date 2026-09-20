@@ -481,6 +481,12 @@ def test_start_screen_layout_keeps_everything_apart(game):
     assert mascot.bottom <= buttons[0].rect.top, (mascot, buttons[0].rect)
     assert mascot.left > 0 and mascot.right < game.canvas.get_width(), mascot
 
+    # 底部那两行提示是居中的，两边都要留得下边距 —— 加一个快捷键就长一截
+    for text, y in main.START_HINTS:
+        width = game.font_small.size(text)[0]
+        assert width <= game.canvas.get_width() - 48, (text, width)
+        assert y < 1140, (text, y)
+
 
 def test_start_mascot_is_a_fat_arrow_with_a_face(game):
     """吉祥物：蓝色胖箭 + 深色描边 + 一张脸，而且**箭尾不能是黑的**。
@@ -816,8 +822,15 @@ def test_rules_page_text_stays_inside_its_panels(game):
                 continue
             left = pad + col_index * main.RULES_KEY_COL_W
             avail = min(main.RULES_KEY_COL_W, keys.width - pad - left) - 74
-            for line in paint.wrap_text(game.font_small, item[1], avail):
+            if item[0] == main.THEME_KEY:
+                # 这一格右边还站着个拨杆，说明文字能用的地方要把它扣掉
+                avail -= main.RULES_THEME_SWITCH_ROOM
+            lines = paint.wrap_text(game.font_small, item[1], avail)
+            for line in lines:
                 assert game.font_small.size(line)[0] <= avail, (item, line)
+            if item[0] == main.THEME_KEY:
+                # 拨杆就贴在这一行右侧，说明折了行会跟它挤在一起
+                assert len(lines) == 1, (item, lines)
 
 
 def test_rules_panels_stack_without_overlapping(game):
@@ -853,6 +866,94 @@ def test_rules_layout_is_computed_once(game):
     game.state = GameState.RULES
     first = game._rules_layout()
     assert game._rules_layout() is first
+
+
+def test_day_night_shortcut_is_documented_and_works_on_every_screen(game):
+    """按键功能表里印着的那条日夜快捷键，在任何界面都要真的管用。
+
+    别的字母键（U / H / A / G）都只在棋盘上认，而玩家看到「T 切换日夜主题」
+    十有八九就是在规则页当场按下去试 —— 所以这一条故意做成全局的：停在开始页、
+    规则页、选关页还是对局中，按一下整页都该翻面，并且顺手存进存档。
+    """
+    import main
+    from game import theme
+    theme.set_theme("night")
+    assert main.THEME_KEY == "T"
+
+    screens = (
+        ("开始页", game.back_home),
+        ("规则页", game.open_rules),
+        ("入门选关", game.open_tutorial_select),
+        ("对局中", game.start_game),
+    )
+    for name, enter in screens:
+        enter()
+        before = theme.get().name
+        game._handle_key(pygame.K_t)
+        assert theme.get().name != before, name
+        assert game.save.data["theme"] == theme.get().name, name
+    theme.set_theme("night")
+
+
+def test_day_night_shortcut_keeps_the_menu_open(game):
+    """对着菜单换配色，菜单不该被顺手合上（设置里那一条才需要收）。"""
+    from game import theme
+    game.start_game()
+    game.open_menu()
+    theme.set_theme("night")
+    game._handle_key(pygame.K_t)
+    assert game.menu is not None
+    assert theme.get().name == "day"
+    game.toggle_theme()                 # 设置面板 / 顶栏拨杆走的那条仍然会收起菜单
+    assert game.menu is None
+    theme.set_theme("night")
+
+
+def test_rules_page_has_a_day_night_switch_on_the_theme_row(game):
+    """「按键功能」表日夜那一行右侧的拨杆：落在对的行走上、不压字、点得动。
+
+    行号是从 ``THEME_HINT_ROW`` 算出来的 —— 往表里插一行也不会让拨杆飞到别的
+    行上去（那种错位不会报错，只会静静地压住旁边的说明文字）。
+    """
+    import main
+    from game import theme
+    theme.set_theme("night")
+    game.state = GameState.RULES
+    boxes = _text_ink_boxes(game)       # 画一遍，顺手抓下全部文字墨迹
+    layout = game._rules_layout()
+    keys = layout["keys"]
+    rect = game.rules_theme_switch.rect
+    row_y = (keys.top + layout["head"] + main.RULES_KEY_CAP_H // 2
+             + main.THEME_HINT_ROW * layout["key_row_h"])
+
+    assert rect.centery == row_y
+    assert rect.right == keys.right - main.RULES_MARGIN
+    assert keys.left < rect.left < rect.right < keys.right
+    hit = [(text, tuple(box)) for text, box in boxes if rect.colliderect(box)]
+    assert not hit, hit
+
+    game._dispatch_event(pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center))
+    assert theme.get().name == "day"
+    theme.set_theme("night")
+
+
+def test_rules_page_day_night_switch_paints_pixels(game):
+    """小拨杆也得真画出东西：缩到 26 px 高之后，太阳只剩十几像素大。
+
+    两套主题各画一遍 —— 日间那套的滑块是白的，浅色底上更容易「糊成一片」。
+    """
+    from game import theme
+    game.state = GameState.RULES
+    for name in ("night", "day"):
+        theme.set_theme(name)
+        game._draw()
+        rect = game.rules_theme_switch.rect
+        colors = {game.canvas.get_at((x, y))[:3]
+                  for x in range(rect.left, rect.right)
+                  for y in range(rect.top, rect.bottom)}
+        assert len(colors) > 60, (name, len(colors))
+    theme.set_theme("night")
 
 
 def _ink(font, text, rect):

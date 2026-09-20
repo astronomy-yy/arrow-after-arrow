@@ -630,8 +630,8 @@ def test_the_basic_only_alias_is_gone(game):
 
 def test_shortcut_table_covers_the_keys_and_drops_n():
     keys = [item[0] for row in main.KEY_HINTS for item in row if item]
-    assert {"U", "H", "A", "G", "Esc", "滚轮", "拖动", "方向键", "0"} \
-        <= set(keys)
+    assert {"U", "H", "A", "G", "Esc", "滚轮", "拖动", "方向键", "0",
+            main.THEME_KEY} <= set(keys)
     assert "N" not in {key.upper() for key in keys}
 
 
