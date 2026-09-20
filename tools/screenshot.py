@@ -48,6 +48,21 @@ def main():
     game.open_rules()
     shoot(game, "rules.png")
 
+    # 入门玩法选关（三张宽卡，关号 1 / 2 / 3）
+    game.save.data["cleared"] = ["T1"]
+    game.save.data["stars"] = {"T1": 3}
+    game.open_tutorial_select()
+    shoot(game, "tutorial_select.png")
+
+    # 入门关盘面：整盘都是单格箭
+    game.use_track("tutorial")
+    game.level_index = 0
+    game.level_number = game._level_display_number(0)
+    game._load_level(game.tutorial_levels[0])
+    game.state = GameState.PLAYING
+    game._compute_geometry()
+    shoot(game, "playing_tutorial1.png")
+
     # 基础玩法选关
     game.open_basic_select()
     game.save.data["cleared"] = [1, 2]
@@ -150,9 +165,11 @@ def main():
     game.state = GameState.LEVEL_CLEAR
     shoot(game, "level_clear_day.png")
 
-    # 日间主题的规则页与字母选关：浅底上艺术字 / 胶囊是否还压得住
+    # 日间主题的规则页、入门选关与字母选关：浅底上艺术字 / 胶囊是否还压得住
     game.open_rules()
     shoot(game, "rules_day.png")
+    game.open_tutorial_select()
+    shoot(game, "tutorial_select_day.png")
     game.open_letter_select()
     shoot(game, "letter_select_day.png")
 

@@ -747,22 +747,29 @@ C 的字模          放大后（3 倍）
 字母的笔画窄（`scale=3` 时只有 3 格宽），默认的 26 格会让一支箭一口吞掉整条笔画
 （早期 L 关曾经只剩 3 支箭），压到 20 之后箭数才够看。
 
-### 9.4 四个入口与状态机
+### 9.4 五个入口与状态机
 
-开始页原来只有「开始游戏 / 关卡选择」，现在换成四个平级入口：
+开始页原来只有「开始游戏 / 关卡选择」，现在换成五个平级入口：
 
 | 入口 | 目标状态 | 说明 |
 |---|---|---|
-| 规则介绍 | `RULES` | 玩法 + 按键功能表 + 三种玩法；返回时回到进来的那一屏 |
+| 规则介绍 | `RULES` | 玩法 + 按键功能表 + 四种玩法；返回时回到进来的那一屏 |
+| 入门玩法 | `TUTORIAL_SELECT` | 3 关单格箭，全部开放（T20 之前是直接开第 1 关，没有选关页） |
 | 基础玩法 | `BASIC_SELECT` | 12 关，逐关解锁 |
 | 字母玩法 | `LETTER_SELECT` | 26 个字母，全部开放 |
 | 随机关卡 | 直接 `PLAYING` | 现场生成，不进选关页、不写存档 |
 
-「当前在玩哪一套关卡」用一个 `self.track`（`"basic"` / `"letter"`）+ `self.levels`
-指向对应的那份列表来表达。这样第 4 章那套「`current_level is levels[level_index]`
-才算主线关卡」的存档判断原样可用：随机关卡不在任何列表里，自然不会写进存档；
-字母关的 id 是字符串 `"A"`~`"Z"`，和基础关卡的 `1`~`12` 在同一个 `cleared`
-列表里也不会撞。
+「当前在玩哪一套关卡」用一个 `self.track`（`"basic"` / `"letter"` / `"tutorial"`）
++ `self.levels` 指向对应的那份列表来表达。这样第 4 章那套
+「`current_level is levels[level_index]` 才算主线关卡」的存档判断原样可用：
+随机关卡不在任何列表里，自然不会写进存档；字母关的 id 是字符串 `"A"`~`"Z"`、
+入门关是 `"T1"`~`"T3"`，和基础关卡的 `1`~`12` 在同一个 `cleared` 列表里也不会撞。
+
+**存档 id 和界面关号是两件事**：入门三关的 id 必须是 `T1/T2/T3` 而不是 `1/2/3`
+（后者会和基础关撞车，清掉基础第 1 关会顺手把入门第 1 关也标成已通关），但玩家
+看到的关号要按顺序是 1/2/3。所以显示的关号统一走 `Game._level_display_number(index)`：
+入门线按列表下标返回 `index + 1`，其余玩法沿用 id。T20 之前直接拿 id 当关号，
+界面上就显示成了 101/102/103。
 
 **按键表是数据，不是散落的字符串**：`main.KEY_HINTS` 是一个两列的元组，
 界面照它画、测试照它断言（包括「不再有 N 键」这条回归）。随机关卡从按键
@@ -776,8 +783,8 @@ C 的字模          放大后（3 倍）
 | 提示（花金币高亮下一步） | `main.use_hint` |
 | 撤销上一步 | `Board.snapshot / undo` + `main.undo` |
 | 倒计时与星级评价 | `main._update / _finish_level` |
-| 关卡选择界面（基础 12 关 / 字母 26 关） | `main._draw_level_select / _draw_letter_select` |
-| 开始页四个入口 + 规则介绍页 | `main._build_widgets / _draw_rules`、`main.KEY_HINTS` |
+| 关卡选择界面（入门 3 关 / 基础 12 关 / 字母 26 关） | `main._draw_tutorial_select / _draw_level_select / _draw_letter_select` |
+| 开始页五个入口 + 规则介绍页 | `main._build_widgets / _draw_rules`、`main.KEY_HINTS` |
 | 字母玩法（5×7 点阵字模 → 棋盘遮罩） | `game/letters.py` + `game/level_letters.py` |
 | 随机生成关卡 | `generator.random_level` |
 | JSON 本地存档 | `game/storage.py` |
