@@ -97,6 +97,8 @@ class Palette:
     art_bar_b: tuple       # 装饰横条（后一个「一」）
     art_alt_top: tuple     # 末尾那个字的字面渐变上端（换个颜色做收尾）
     art_alt_bottom: tuple  # 末尾那个字的字面渐变下端
+    art_alt2_top: tuple    # 中间那个「又」的字面渐变上端（再换一色，跟前后箭都不同）
+    art_alt2_bottom: tuple # 中间那个「又」的字面渐变下端
 
 
 NIGHT = Palette(
@@ -173,6 +175,9 @@ NIGHT = Palette(
     art_bar_b=(78, 162, 236),
     art_alt_top=(124, 212, 142),
     art_alt_bottom=(52, 158, 92),
+    # 中间那个「又」用暖金色，跟奶白的「箭」、绿色的收尾「箭」都拉开，三色才不糊
+    art_alt2_top=(250, 184, 96),
+    art_alt2_bottom=(214, 132, 46),
 )
 
 DAY = Palette(
@@ -249,6 +254,8 @@ DAY = Palette(
     art_bar_b=(78, 162, 236),
     art_alt_top=(124, 212, 142),
     art_alt_bottom=(52, 158, 92),
+    art_alt2_top=(248, 178, 92),
+    art_alt2_bottom=(212, 128, 44),
 )
 
 THEMES = {"night": NIGHT, "day": DAY}

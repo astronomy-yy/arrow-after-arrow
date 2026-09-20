@@ -191,12 +191,106 @@ def _click(pos):
     return pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
 
 
-def test_start_screen_has_four_entries(game):
+def test_start_screen_has_five_entries(game):
     assert game.state == GameState.START
     labels = [b.text for b in game.start_buttons]
-    assert labels == ["规则介绍", "基础玩法", "字母玩法", "随机关卡"]
+    assert labels == ["规则介绍", "入门玩法", "基础玩法", "字母玩法", "随机关卡"]
     for button in game.start_buttons:
         assert button.icon is not None
+
+
+def test_tutorial_button_opens_a_level_select_screen(game):
+    """「入门玩法」给的是一页选关，不是直接把人丢进第 1 关。"""
+    game.state = GameState.START
+    game.tutorial_button.handle_event(_click(game.tutorial_button.rect.center))
+    assert game.state == GameState.TUTORIAL_SELECT
+    assert game.track == "tutorial"
+    assert len(game.tutorial_levels) == 3
+
+    # 三关都能点，关号按顺序是 1 / 2 / 3
+    rects = game._tutorial_rects()
+    assert len(rects) == 3
+    for index, rect in enumerate(rects):
+        game.state = GameState.TUTORIAL_SELECT
+        game._dispatch_event(_click(rect.center))
+        assert game.state == GameState.PLAYING
+        assert game.level_number == index + 1, (index, game.level_number)
+
+
+def test_tutorial_levels_are_numbered_one_two_three(game):
+    """入门关显示 1/2/3；存档用的 id 必须跟基础关、字母关都不撞。"""
+    game.open_tutorial_select()
+    shown = [game._level_display_number(i) for i in range(3)]
+    assert shown == [1, 2, 3], shown
+
+    ids = [level["id"] for level in main.TUTORIAL_LEVELS]
+    others = {level["id"] for level in main.LEVELS} | \
+        {level["id"] for level in LETTER_LEVELS}
+    assert not (set(ids) & others), (ids, sorted(others))
+
+
+def click_cell(game, row, col):
+    """点棋盘上一格：按下 + 抬起成对发（只发按下不会触发点击）。"""
+    pos = game._grid_center(row, col)
+    for kind in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+        game._dispatch_event(
+            pygame.event.Event(kind, {"pos": pos, "button": 1}))
+
+
+def settle(game, limit=3000):
+    """推进主循环，直到飞出 / 弹回动画都播完。"""
+    steps = 0
+    while (game.flying or game.blocked) and steps < limit:
+        game._update(1.0 / 60.0)
+        steps += 1
+    assert steps < limit, "动画没有在合理步数内结束"
+
+
+def test_tutorial_playthrough_runs_1_2_3_and_returns_to_its_select(game):
+    """入门玩法整条链路：选关页 → 第 1 关 → 通关 → 下一关 → 靶心回选关页。"""
+    game.state = GameState.START
+    game.tutorial_button.handle_event(_click(game.tutorial_button.rect.center))
+    assert game.state == GameState.TUTORIAL_SELECT
+
+    # 点第一张卡进第 1 关，关号是 1
+    first = game._tutorial_rects()[0]
+    game._dispatch_event(_click(first.center))
+    assert game.state == GameState.PLAYING
+    assert game.level_number == 1
+
+    # 按 solution 点完应当通关；进度只落在入门关自己身上
+    level = game.tutorial_levels[0]
+    for arrow_id in level["solution"]:
+        arrow = next(a for a in game.board.arrows if a.id == arrow_id)
+        click_cell(game, *arrow.head)
+        settle(game)
+    game._update(1.0 / 60.0)
+    assert game.state == GameState.LEVEL_CLEAR
+    assert game.save.is_cleared("T1") is True
+    assert game.save.is_cleared(1) is False      # 不能串到基础第 1 关
+
+    # 下一关 -> 关号 2（按列表下标排，不是 101/102）
+    game.next_level()
+    assert game.level_number == 2
+    assert game.state == GameState.PLAYING
+
+    # 靶心回的是入门选关页 —— 不是开始页，也不是基础选关页
+    game.leave_level()
+    assert game.state == GameState.TUTORIAL_SELECT
+
+    # Esc 从选关页回开始页
+    game._handle_key(pygame.K_ESCAPE)
+    assert game.state == GameState.START
+
+
+def test_tutorial_levels_have_plenty_of_arrows():
+    """入门关是拿来练手的，箭太少点两下就没了 —— 每关至少 8 支。"""
+    assert len(main.TUTORIAL_LEVELS) == 3
+    for level in main.TUTORIAL_LEVELS:
+        assert len(level["arrows"]) >= 8, (level["id"], len(level["arrows"]))
+        # 全是单格箭，而且顺序解真的走得通
+        assert all(len(arrow["cells"]) == 1 for arrow in level["arrows"])
+        assert generator.verify_solution(level) is True
 
 
 def test_rules_button_opens_and_returns(game):

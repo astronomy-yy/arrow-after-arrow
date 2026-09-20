@@ -742,10 +742,19 @@ def art_banner(font, pieces, gap=6, outline=None, outline_width=5,
     inks = [part.get_bounding_rect() for part in parts]
     width = sum(ink.width for ink in inks) + gap * (len(parts) - 1)
     height = max(part.get_height() for part in parts)
+    # 纵向按**墨迹中心**对齐：每一片都绕各自的墨迹中心摆，参考线取最高那一片
+    # 的墨迹中心。于是矮的胶囊横条会自动落在字的中间，不再贴着字的下沿。
+    # （原来按 ``height - part.get_height()`` 底边对齐，横条比字矮，就被压到了底部。）
+    ref_center = 0
+    for part, ink in zip(parts, inks):
+        if part.get_height() == height:
+            ref_center = ink.centery
+            break
     canvas = pygame.Surface((max(1, width), max(1, height)), pygame.SRCALPHA)
     x = 0
     for part, ink in zip(parts, inks):
-        canvas.blit(part, (x - ink.left, height - part.get_height()))
+        y = int(round(ref_center - ink.centery))
+        canvas.blit(part, (x - ink.left, y))
         x += ink.width + gap
     return canvas
 

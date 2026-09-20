@@ -405,13 +405,13 @@ def _colors_of(game, step=24):
 
 @pytest.mark.parametrize("name", ["night", "day"])
 def test_every_screen_renders_with_depth(game, name):
-    """八个状态 × 两套主题：不崩，而且背景不是一块纯色。"""
+    """九个状态 × 两套主题：不崩，而且背景不是一块纯色。"""
     theme.set_theme(name)
     game.start_game()
-    for state in (GameState.START, GameState.RULES, GameState.BASIC_SELECT,
-                  GameState.LETTER_SELECT, GameState.PLAYING,
-                  GameState.LEVEL_CLEAR, GameState.GAME_OVER,
-                  GameState.ALL_CLEAR):
+    for state in (GameState.START, GameState.RULES, GameState.TUTORIAL_SELECT,
+                  GameState.BASIC_SELECT, GameState.LETTER_SELECT,
+                  GameState.PLAYING, GameState.LEVEL_CLEAR,
+                  GameState.GAME_OVER, GameState.ALL_CLEAR):
         game.state = state
         game._update_view()
         game._draw()
@@ -461,20 +461,17 @@ def test_menu_panel_hover_highlight_differs(game):
 
 
 def test_start_screen_layout_keeps_everything_apart(game):
-    """开始页排版：标题 → 四个入口按钮 → 进度卡 → 底部提示，互不重叠。"""
+    """开始页排版：标题 → 五个入口按钮 → 底部提示，互不重叠。"""
     game.state = GameState.START
     game._draw()
     buttons = list(game.start_buttons)
-    assert len(buttons) == 4
+    assert len(buttons) == 5
     for index, button in enumerate(buttons):
         assert button.rect.bottom <= 1140, button.rect
         if index:
             # 上下相邻，且留得出间距
             assert button.rect.top >= buttons[index - 1].rect.bottom + 8, \
                 (buttons[index - 1].rect, button.rect)
-    stats = pygame.Rect(*main.START_STATS_RECT)
-    assert buttons[-1].rect.bottom <= stats.top, (buttons[-1].rect, stats)
-    assert stats.bottom <= 1140
 
     # 吉祥物夹在副标题与第一个按钮之间，谁也不压谁
     mascot = game._draw_start_mascot()
@@ -579,6 +576,65 @@ def test_art_title_is_a_cartoon_sticker_banner(game):
     lighter = mean(min(ys), min(ys) + 10)
     darker = mean(max(ys) - 10, max(ys) + 1)
     assert sum(lighter) > sum(darker), (lighter, darker)     # 字面上亮下暗
+
+
+def test_art_title_bars_sit_at_the_same_height_as_the_glyphs(game):
+    """胶囊横条要和旁边的字**垂直居中**，不能掉到字的下沿去。
+
+    ``art_banner`` 原来按底边对齐摆片（``height - part.get_height()``）：
+    横条比字矮一截，就被压到字的底部，实测墨迹中心差了约 27 px，肉眼一眼
+    就能看出来。改成按墨迹中心对齐之后，两者必须落在同一条中心线上。
+    """
+    pal = theme.get()
+    pieces = game._start_title_pieces(pal)
+    common = dict(outline=pal.art_outline, outline_width=7,
+                  outline2=pal.art_edge, outline2_width=4,
+                  highlight=pal.art_gloss, shadow=(26, 24, 46),
+                  shadow_offset=(0, 10), lift=4)
+    banner = paint.art_banner(game.font_banner, pieces, gap=8, **common)
+
+    def render(piece):
+        if piece.get("kind") == "bar":
+            return paint.art_bar(piece["width"], piece["height"],
+                                 piece["color"], top=piece.get("top"),
+                                 bottom=piece.get("bottom"), **common)
+        return paint.art_text(game.font_banner, piece["text"],
+                              piece.get("top"), piece.get("bottom"), **common)
+
+    inks = [render(piece).get_bounding_rect() for piece in pieces]
+
+    x = 0
+    centers = {}
+    for index, ink in enumerate(inks):
+        # 只取这一片墨迹宽度的中间一半 —— 两边都可能探进邻居的描边，不能量
+        left = x + ink.width // 4
+        right = x + ink.width * 3 // 4
+        ys = [y for y in range(banner.get_height())
+              for px in range(left, right)
+              if banner.get_at((px, y))[3] > 200]
+        assert ys, (index, left, right)
+        centers[index] = (min(ys) + max(ys)) / 2
+        x += ink.width + 8
+
+    bars = [centers[0], centers[3]]
+    glyphs = [centers[1], centers[2], centers[4]]
+    for bar in bars:
+        for glyph in glyphs:
+            assert abs(bar - glyph) <= 6, (bars, glyphs)
+
+
+def test_the_three_glyphs_of_the_title_all_have_their_own_color(game):
+    """第二个字「又」和第三个字「箭」颜色必须不一样。
+
+    原先「又」跟第一个「箭」共用同一份奶白渐变，整条标题看着就缺一块颜色。
+    """
+    pal = theme.get()
+    pieces = game._start_title_pieces(pal)
+    # 五片依次是：横条 / 箭 / 又 / 横条 / 箭
+    faces = [pieces[index]["top"] for index in (1, 2, 4)]
+    assert len(set(faces)) == 3, faces
+    assert pieces[2]["top"] != pieces[1]["top"]      # 又 ≠ 第一个箭
+    assert pieces[2]["bottom"] != pieces[1]["bottom"]
 
 
 def big_font(size=40):
@@ -765,7 +821,12 @@ def test_rules_page_text_stays_inside_its_panels(game):
 
 
 def test_rules_panels_stack_without_overlapping(game):
-    """三块面板依次往下排、互不重叠，返回按钮落在最后一块下面。"""
+    """四块面板依次往下排、互不重叠，返回按钮落在最后一块下面。
+
+    这条之前是**失败**的：`esc_y = 1318` 而画面只有 1140，底部提示与返回按钮
+    整个掉在画面外（玩家看到的就是「规则页底下被切掉」）。版式常量收紧之后
+    才过。四块面板里任何一块内容变长，这条会再响一次。
+    """
     import main
     game.state = GameState.RULES
     layout = game._rules_layout()
