@@ -533,103 +533,12 @@ LEVELS = [
 ]
 
 
-# ---------------- 入门玩法（3 关，全部单格箭） ----------------
-#
-# 单格箭只占一格、只沿自身那格再按 dir 飞出，棋盘逻辑（can_fly_arrow）只看
-# 箭头端正前方那条射线上有没有别的线段，所以新手一眼就能读懂。
-#
-# 盘面按「铺满棋盘一半以上」摆（原来三关只占 7%，点两下就空了）：
-#   入门 1：每行一串朝右的单格箭，一排挡一排，从最右边一支一支往左点；
-#   入门 2：上半盘全朝上、下半盘全朝下，两边各自从贴着盘边的那支开始清；
-#   入门 3：两侧竖列 + 中间四条横行 + 两条下沉列，纵横交叉 —— 先清竖列
-#           把横行的射线让出来，再收横行，最后从下往上收下沉列。
-#
-# ids 用 T1/T2/T3 —— 存档是按 id 判重的，必须避开基础关（1~12）与字母关
-# （A~Z），否则「清掉基础第 1 关」会顺手把入门第 1 关也标成已通关。界面上
-# 显示的关号是 1/2/3（见 ``Game._level_display_number``），不再显示 101/102。
-#
-# 红心跟主线一样是 3 颗（``mistakes``）。
-#
-# ``solution`` 不手写：摆完格子交给 game/solver.py 的拓扑排序算一条合法解 ——
-# 摆成死局会在导入时直接报错，改了盘面也不用手工重排顺序。
-
-
-def _single_cell_arrows(spans):
-    """把「一串格子 + 一个方向」铺成单格箭，颜色顺着调色板轮转。
-
-    spans 里每项是 ``(rows, cols, direction)``：rows / cols 是可迭代的格子
-    下标，逐格生成一支单格箭。同一串同向天然就是一条阻挡链 —— 只能从箭头
-    所指的那一端往回点。
-    """
-    arrows = []
-    for rows, cols, direction in spans:
-        for row in rows:
-            for col in cols:
-                arrows.append({
-                    "cells": [[row, col]],
-                    "dir": direction,
-                    "color": len(arrows) % 10,
-                })
-    return arrows
-
-
-def _tutorial_level(level_id, name, desc, rows, cols, time_limit, spans):
-    """补齐一整关的数据，并用求解器算出一条合法解。"""
-    from game.board import Board
-    from game.solver import solve
-
-    arrows = _single_cell_arrows(spans)
-    level = {
-        "id": level_id,
-        "name": name,
-        "desc": desc,
-        "shape": "rect",
-        "mistakes": 3,                     # 红心 3 颗，跟主线一致
-        "rows": rows,
-        "cols": cols,
-        "seed": 101000 + len(arrows),      # 只作复现记录，运行时不参与逻辑
-        "time_limit": time_limit,
-        "arrows": arrows,
-    }
-    order = solve(Board(level))
-    if not order:
-        raise ValueError("入门关 %s 摆成了死局，改一下盘面" % level_id)
-    level["solution"] = order
-    return level
-
-
-TUTORIAL_LEVELS = [
-    # 6x8=48 格，30 支（62%）：三行铺 cols 0~4、三行铺 cols 1~5，全是朝右的链
-    _tutorial_level(
-        "T1", "入门 1 满盘齐飞", "每行一串，从右往左点", 6, 8, 300,
-        [
-            ((0, 2, 4), range(0, 5), "R"),
-            ((1, 3, 5), range(1, 6), "R"),
-        ],
-    ),
-    # 7x9=63 格，35 支（56%）：上半 3 行朝上、下半 3 行朝下，中间一行朝右
-    _tutorial_level(
-        "T2", "入门 2 上下分头", "上半朝上、下半朝下", 7, 9, 300,
-        [
-            ((0, 1, 2), range(1, 6), "U"),
-            ((4, 5, 6), range(1, 6), "D"),
-            ((3,), range(1, 6), "R"),
-        ],
-    ),
-    # 8x10=80 格，48 支（60%）：两侧竖列 + 四条横行 + 两条下沉列
-    _tutorial_level(
-        "T3", "入门 3 纵横交叉", "横行纵列交叉", 8, 10, 360,
-        [
-            (range(0, 8), (0, 9), "U"),
-            ((1, 3, 5, 7), range(1, 7), "R"),
-            ((0, 2, 4, 6), (3, 6), "D"),
-        ],
-    ),
-]
-
-
 SHAPE_LABELS = {
     'rect': '方形', 'round': '圆形', 'diamond': '菱形',
     'heart': '心形', 'triangle': '三角', 'cross': '十字',
     'hourglass': '沙漏', 'ring': '圆环',
 }
+
+# 入门玩法不是本脚本生成的（见 game/tutorial.py 的散铺器），放在这里转一道。
+# tools/generate_levels.py 整份重写本文件时也会补上这两行，别再挪回去。
+from game.tutorial import TUTORIAL_LEVELS  # noqa: E402,F401

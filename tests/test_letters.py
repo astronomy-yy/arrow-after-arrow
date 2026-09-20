@@ -3,16 +3,19 @@
 对应需求：「开始界面四个按钮（规则介绍 / 基础玩法 / 字母玩法 / 随机关卡），
 标题一箭又一箭是艺术字，字母玩法 26 关分别是 26 个字母形状」。
 
-分成四块：
+分成五块：
 
 1. 字模与遮罩（game/letters.py）：26 个字母都在、点阵尺寸对、栅格化后
    格子数守恒、留白对、八连通、能塞进棋盘；
 2. 26 关关卡数据（game/level_letters.py）：id / letter / 造型对得上，
    每关都可解、有阻挡、铺得满，难度按字母顺序爬升；
 3. 界面流转：开始页四个入口各自进对的状态、规则页返回、字母选关点得开；
-4. 规则页文案与快捷键表：有 U/H/A/G 等功能说明，**不再有按 N 开随机关卡**。
+4. 规则页文案与快捷键表：有 U/H/A/G 等功能说明，**不再有按 N 开随机关卡**；
+5. 入门玩法（game/tutorial.py）：3 关铺满一半以上、3 颗红心、全是单格箭，
+   **盘面不能摆成一眼看得出规律的图案**，而且必须真的来自逆向构造。
 """
 
+from collections import Counter
 import os
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -22,7 +25,7 @@ import pygame      # noqa: E402
 import pytest      # noqa: E402
 
 import main        # noqa: E402
-from game import generator, letters, theme    # noqa: E402
+from game import generator, letters, theme, tutorial    # noqa: E402
 from game.board import Board                  # noqa: E402
 from game.level_letters import LEVELS as LETTER_LEVELS   # noqa: E402
 from game.shapes import cells_of, is_connected, level_cells  # noqa: E402
@@ -283,6 +286,32 @@ def test_tutorial_playthrough_runs_1_2_3_and_returns_to_its_select(game):
     assert game.state == GameState.START
 
 
+# --------------------------------------------------------------------------
+# 入门玩法：盘面内容（铺满率 / 有阻挡 / 不规律 / 来自逆向构造）
+# --------------------------------------------------------------------------
+
+def _tutorial_direction_grid(level):
+    """{格子: 方向} —— 入门关全是单格箭，一格一支。"""
+    return {tuple(arrow["cells"][0]): arrow["dir"]
+            for arrow in level["arrows"]}
+
+
+def _longest_same_direction_run(grid):
+    """横着或竖着相邻、且方向相同的最长一段（长度 1 表示全都不相连）。"""
+    longest = 1
+    for (row, col), direction in grid.items():
+        for dr, dc in ((0, 1), (1, 0)):
+            if (row - dr, col - dc) in grid:
+                continue                    # 只从这一串的头开始数
+            length, r, c = 0, row, col
+            while grid.get((r, c)) == direction:
+                length += 1
+                r += dr
+                c += dc
+            longest = max(longest, length)
+    return longest
+
+
 def test_tutorial_levels_fill_over_half_the_board():
     """入门关要「尽量铺满棋盘」—— 每关的箭盖住一半以上的格子。
 
@@ -305,11 +334,101 @@ def test_tutorial_levels_fill_over_half_the_board():
         assert len(level["solution"]) == len(level["arrows"])
 
 
+def test_tutorial_boards_are_not_laid_out_in_a_regular_pattern():
+    """入门关不能摆成一眼就看得出规律的图案。
+
+    上一版是按「一串格子 + 一个方向」码图案的：第 1 关每行一条朝右的链、
+    第 2 关上半朝上 / 下半朝下、第 3 关横行纵列交叉。铺是铺满了，但一眼就能
+    看出规律，玩起来像照着图上标的序号点。下面五条就是拿来钉这件事的，
+    括号里是旧盘面的实测值（T1 / T2 / T3）：
+
+    - 没有整行 / 整列同向的条带（旧：12 / 7 / 6 条）；
+    - 没有 2x2 四格同向的小方块（旧：15 / 16 / 0 个）；
+    - 横竖相邻同向的最长一段不超过 3（旧：6 / 5 / 8）；
+    - 四个方向都出现，且最多的那个不超过 35%（旧：100% / 43% / 50%）；
+    - 开局能直接飞出去的箭占 18% ~ 42%（旧：20% / 31% / 4%）。
+    """
+    for level in main.TUTORIAL_LEVELS:
+        rows, cols = level["rows"], level["cols"]
+        grid = _tutorial_direction_grid(level)
+
+        # ① 整行 / 整列同向的条带
+        for row in range(rows):
+            line = [grid[(row, col)] for col in range(cols)
+                    if (row, col) in grid]
+            assert not (len(line) >= 3 and len(set(line)) == 1), \
+                (level["id"], "第 %d 行整行同向" % row)
+        for col in range(cols):
+            line = [grid[(row, col)] for row in range(rows)
+                    if (row, col) in grid]
+            assert not (len(line) >= 3 and len(set(line)) == 1), \
+                (level["id"], "第 %d 列整列同向" % col)
+
+        # ② 没有 2x2 四格同向的小方块
+        for row in range(rows - 1):
+            for col in range(cols - 1):
+                block = [grid.get((row, col)), grid.get((row + 1, col)),
+                         grid.get((row, col + 1)), grid.get((row + 1, col + 1))]
+                assert None in block or len(set(block)) > 1, \
+                    (level["id"], row, col)
+
+        # ③ 没有长串（长串横看竖看都像画出来的梳子）
+        assert _longest_same_direction_run(grid) <= 3, level["id"]
+
+        # ④ 四个方向都得出现，且不许某一个方向压倒性多数
+        counts = Counter(arrow["dir"] for arrow in level["arrows"])
+        assert len(counts) == 4, (level["id"], counts)
+        assert max(counts.values()) <= 0.35 * len(level["arrows"]), \
+            (level["id"], counts)
+
+        # ⑤ 开局可飞占比：太低变硬核，太高等于乱点也通
+        board = Board(level)
+        ratio = len(board.flyable_arrows()) / len(level["arrows"])
+        assert 0.18 <= ratio <= 0.42, (level["id"], ratio)
+
+
+def test_tutorial_boards_are_built_by_reverse_construction():
+    """盘面必须真的来自逆向构造：种子重跑能复原，而且倒着点就通。
+
+    这条同时守住两件事：
+
+    1. 关卡数据不是手抄进 level.py 的 —— 拿 ``TUTORIAL_PLAN`` 里的 seed
+       重跑散铺器，格子与方向必须与关卡数据一模一样。以后改了盘面却忘了
+       同步种子，这里就会红；
+    2. 逆向构造的核心不变式：**放箭顺序倒过来就是一条合法通关顺序**。
+       也就是说盘面天生可解，不用事后搜解，也不会摆出互相封死的环。
+    """
+    assert len(tutorial.TUTORIAL_PLAN) == len(main.TUTORIAL_LEVELS)
+    for entry, level in zip(tutorial.TUTORIAL_PLAN, main.TUTORIAL_LEVELS):
+        assert entry["level_id"] == level["id"]
+        assert entry["seed"] == level["seed"]
+        assert entry["count"] == len(level["arrows"])
+        assert entry["rows"] == level["rows"]
+        assert entry["cols"] == level["cols"]
+
+        placed = tutorial.scatter_arrows(entry["rows"], entry["cols"],
+                                        entry["count"], entry["seed"],
+                                        entry["alpha"])
+        assert len(placed) == entry["count"], level["id"]
+        for arrow, (cell, direction) in zip(level["arrows"], placed):
+            assert arrow["cells"] == [list(cell)], (level["id"], cell)
+            assert arrow["dir"] == direction, (level["id"], cell)
+
+        # 放箭顺序倒过来 = 一条合法通关顺序，一路点完必须清空
+        board = Board(level)
+        by_id = {arrow.id: arrow for arrow in board.arrows}
+        for arrow_id in reversed(range(entry["count"])):
+            arrow = by_id[arrow_id]
+            assert board.can_fly_arrow(arrow), (level["id"], arrow_id)
+            board.remove_arrow(arrow)
+        assert board.remaining == 0, level["id"]
+
+
 def test_tutorial_boards_are_dense_and_never_leave_a_deadlock():
     """一路按求解器给的顺序点下去，整盘必须能清空（这是「有解」的完整证明）。
 
-    入门关是按「行/列成串」摆出来的，看上去密密麻麻 —— 这里用真正的棋盘
-    走一遍，防止以后加箭的时候不小心摆出一个互相封死的环。
+    入门关是随机散铺出来的，看上去密密麻麻 —— 这里用真正的棋盘走一遍，
+    防止以后换种子时不小心摆出一个互相封死的环。
     """
     for level in main.TUTORIAL_LEVELS:
         board = Board(level)

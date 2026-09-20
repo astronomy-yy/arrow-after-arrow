@@ -186,6 +186,14 @@ def dump(levels, path):
     lines.append("    'hourglass': '沙漏', 'ring': '圆环',")
     lines.append("}")
     lines.append("")
+    # 入门三关是手写的（game/tutorial.py），本脚本却是整份重写 level.py 的，
+    # 漏掉这几行就会把入门玩法从游戏里抹掉。别删。
+    lines.append("# 入门玩法不是本脚本生成的（见 game/tutorial.py 的散铺器），"
+                 "放在这里转一道。")
+    lines.append("# tools/generate_levels.py 整份重写本文件时也会补上这两行，"
+                 "别再挪回去。")
+    lines.append("from game.tutorial import TUTORIAL_LEVELS  # noqa: E402,F401")
+    lines.append("")
     text = "\n".join(lines)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
