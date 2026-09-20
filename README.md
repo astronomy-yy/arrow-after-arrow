@@ -5,6 +5,9 @@
 点击一条线段，它会沿自己的折线轨迹滑出棋盘、再顺箭头方向飞出屏幕；如果箭头前方被
 别的线段挡住，则被弹回、扣一颗红心。清空全部线段即通关，红心耗尽或倒计时归零则失败。
 
+开始页有四个入口：**规则介绍**、**基础玩法**（12 关）、**字母玩法**（26 个字母各一关，
+整盘铺成那个字母）、**随机关卡**（随机造型现场生成）。
+
 ## 开发环境
 
 - 操作系统：Windows
@@ -40,21 +43,28 @@ python main.py
 | 底部滑杆与放大镜 | 缩放棋盘 |
 | 底部 `#` | 辅助线点阵开关 |
 | 拖拽窗口边框 | 整幅画面等比缩放（窗口尺寸、棋盘几何都跟着变） |
-| 快捷键 | `U` 撤销 · `H` 提示 · `A` AI 自动求解 · `G` 辅助线 · `N` 随机关卡 · `Esc` 菜单与返回 |
+| 快捷键 | `U` 撤销 · `H` 提示 · `A` AI 自动求解 · `G` 辅助线 · `Esc` 菜单与返回 |
+| 开始页 | 四个入口：规则介绍 / 基础玩法 / 字母玩法 / 随机关卡（随机关卡不再占用字母键） |
 
 > 棋盘只在放大到超出可视区时才拖得动（缩小状态下本来就整块看得见，位置锁在正中）。
 > 拖动被夹在可视区里：最多拖到棋盘边缘与可视区边缘对齐，绝不会把棋盘拖出屏幕找不回来。
 
 ## 玩法与关卡
 
-- **12 个主线关卡**，造型依次为方形、圆形、菱形、十字、心形、三角、沙漏、圆环等。
+- **基础玩法：12 个关卡**，造型依次为方形、圆形、菱形、十字、心形、三角、沙漏、圆环等。
+- **字母玩法：26 个字母各一关**。先把 A–Z 的字模（`game/letters.py` 的 5×7 点阵）
+  按 2 倍放大成棋盘遮罩，再用同一套逆向构造法往里铺线段 —— 于是每一关整盘就是
+  一个大写字母（统一 16×12 的盘，比如 A 有 72 格、13 支箭）。斜笔字母（C / S / J / Q）
+  在点阵层面是对角相接的，所以那里的连通性按**八连通**判定。难度按字母顺序爬升：
+  A 一带开局约四成的箭能直接飞，Z 一带压到三成以下。详见 `docs/design.md` 第 9 节。
 - 关卡不是手摆的，而是由 `game/generator.py` 用**逆向构造法**批量生成，
   每一关都要过两道独立校验：按生成顺序模拟点一遍，再用求解器独立解一遍。
 - **关卡是互相阻挡的**：一支箭的箭头常常直接顶在另一支箭的身体上，必须先清掉
   挡路的那支。难度逐关递增 —— 开局能直接点掉的箭从第 1 关的 67% 降到第 12 关
   的 11%（19 支箭里只有 2 支能直接点）。
 - 盘面填充率普遍在 **0.94 ~ 1.00**（参考录屏里的盘面几乎铺满，空出来的点阵就是箭的飞行通道）。
-- **随机关卡**：按 `N` 或从菜单点「随机关卡」，用同一套生成器现场生成一关，不写入存档进度。
+- **随机关卡**：从开始页的「随机关卡」进去，用同一套生成器现场生成一关（造型、尺寸
+  都随机），不写入存档进度。游戏中按 `Esc` 打开菜单也能看规则与当前玩法的选关页。
 - **AI 求解**：`game/solver.py` 把「谁挡谁」建成有向图做**拓扑排序**，O(n²) 精确判定，
   既能给出下一步提示（H），也能自动替你通关（A）；图里有环才判为无解。
 - **飞出动画**：整条线沿自身折线「流」出去 —— 取的是折线真正的一段（拐角不会被两点间的
@@ -67,7 +77,9 @@ python main.py
 - **界面观感**：整页背景是竖向渐变 + 棋盘后方一团柔光；棋盘垫在一块圆角面板上；
   顶栏底栏是半透明「玻璃」加一道渐隐阴影；按钮、卡片、菜单项、滑杆都是渐变填充 +
   细描边 + 投影，悬停提亮描边、按下整体下沉 2 像素。所有贴图都按参数缓存，
-  一帧只是几次 `blit`。详见 `docs/design.md` 第 8 节。
+  一帧只是几次 `blit`。开始页标题「一箭又一箭」是**艺术字**：竖向渐变填充 + 外描边 +
+  顶部高光 + 投影，做法是「先把文字放大 3 倍、在放大空间里按圆盘铺描边、再缩回」，
+  斜笔的描边因此等宽又平滑。详见 `docs/design.md` 第 8 节。
 
 ## 项目结构
 
@@ -79,9 +91,11 @@ arrow-after-arrow/
 │   ├── theme.py               # 日间 / 夜间两套界面配色 + 箭头配色解析
 │   ├── paint.py               # 柔和绘制：渐变、柔光、投影、卡片、文字阴影（全缓存）
 │   ├── arrow.py               # 方向枚举、线段宽度、圆角折线与箭头绘制
-│   ├── shapes.py              # 关卡造型遮罩：矩/圆/菱/心/三角/十字/沙漏/环
+│   ├── shapes.py              # 关卡造型遮罩：矩/圆/菱/心/三角/十字/沙漏/环/字母
+│   ├── letters.py             # A–Z 的 5×7 点阵字模 → 栅格化成字母棋盘遮罩
 │   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验 + 阻挡难度旋钮
-│   ├── level.py               # 12 关关卡数据（由 tools/generate_levels.py 生成）
+│   ├── level.py               # 基础玩法 12 关（由 tools/generate_levels.py 生成）
+│   ├── level_letters.py       # 字母玩法 26 关（由 tools/generate_letters.py 生成）
 │   ├── board.py               # 棋盘：占据网格、射线检测、撤销、重置
 │   ├── solver.py              # 拓扑排序求解器：提示 / 自动通关共用
 │   ├── animations.py          # 飞出滑行（沿折线取段）、残影、弹回摆动、提示呼吸
@@ -93,12 +107,14 @@ arrow-after-arrow/
 │   └── states.py              # 游戏状态枚举
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
+│   ├── generate_letters.py    # 重新生成 game/level_letters.py（26 个字母）
 │   ├── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
 │   └── perf_bench.py          # 整帧耗时基准（各界面 × 日夜主题）
-├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 动效 / 线段渲染 / 界面观感 / 端到端
+├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 /
+│                              #   缩放拖动 / 动效 / 线段渲染 / 界面观感 / 字母玩法 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
-│   └── test-record.md         # T01–T12 测试记录
+│   └── test-record.md         # T01–T13 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -108,19 +124,30 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 227 个用例，无窗口运行
-python tools/generate_levels.py        # 重新生成 12 关
+python -m pytest -q                    # 332 个用例，无窗口运行
+python tools/generate_levels.py        # 重新生成基础玩法 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
-python tools/screenshot.py             # 重新导出 README 用的截图
+python tools/generate_letters.py A B   # 重新生成字母玩法里指定的几个字母
+python tools/generate_letters.py --check # 校验 26 个字母关（连通 / 可解 / 有阻挡）
+python tools/generate_letters.py --stats # 打印 26 个字母关的难度表
+python tools/screenshot.py             # 重新导出 README 用的 20 张截图
 python tools/perf_bench.py             # 打印各界面 × 日夜主题的整帧耗时
 ```
 
 ## 游戏截图
 
-| 开始界面 | 关卡选择 |
+| 开始界面（艺术字标题 + 四个入口） | 规则介绍（玩法 + 按键功能表） |
 |---|---|
-| ![开始](assets/screenshots/start.png) | ![选关](assets/screenshots/level_select.png) |
+| ![开始](assets/screenshots/start.png) | ![规则](assets/screenshots/rules.png) |
+
+| 字母玩法选关（26 个字母） | 字母关盘面（整盘铺成一个字母 M） |
+|---|---|
+| ![字母选关](assets/screenshots/letter_select.png) | ![字母关](assets/screenshots/playing_letter_m.png) |
+
+| 基础玩法选关 | 字母关 A（16×12 的盘，13 支箭） |
+|---|---|
+| ![选关](assets/screenshots/level_select.png) | ![字母A](assets/screenshots/playing_letter_a.png) |
 
 | 夜间关卡 | 日间关卡 |
 |---|---|
