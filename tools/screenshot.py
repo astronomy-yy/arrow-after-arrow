@@ -115,6 +115,21 @@ def main():
             break
     shoot(game, "playing_flying.png")
 
+    # 被挡住的一帧：箭朝箭头方向冲出去一段、红心少一颗、盘上留下暗红标记
+    #
+    # 步数要跳过整个弹回动画（约 27 帧）才拍：弹回期间叠在上面的那支箭画的是
+    # 它自己的颜色（否则看不出「是这一支没飞出去」），暗红标记要等动画结束、
+    # 露出底下那层静态的箭才看得见。34 帧正好是「弹回刚结束 + 提示条还在」。
+    game._load_level(game.levels[0])
+    game.state = GameState.PLAYING
+    blocked = [a for a in game.board.arrows
+               if not game.board.can_fly_arrow(a)]
+    victim = max(blocked, key=lambda a: len(a.cells))
+    game._block(victim)
+    for _ in range(34):
+        game._update(1.0 / 60)
+    shoot(game, "playing_blocked.png")
+
     # 放大 + 拖到一侧：验证「缩放 + 平移」联动（可见区只剩棋盘的一部分）
     game.level_index = 8
     game.level_number = game.levels[8].get("id", 9)

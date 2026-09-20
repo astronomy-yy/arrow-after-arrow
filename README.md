@@ -165,7 +165,7 @@ python tools/generate_levels.py --stats  # 打印 12 关的难度表
 python tools/generate_letters.py A B   # 重新生成字母玩法里指定的几个字母
 python tools/generate_letters.py --check # 校验 26 个字母关（连通 / 可解 / 有阻挡）
 python tools/generate_letters.py --stats # 打印 26 个字母关的难度表
-python tools/screenshot.py             # 重新导出 assets/screenshots/ 下的 26 张截图
+python tools/screenshot.py             # 重新导出 assets/screenshots/ 下的 27 张截图
 python tools/perf_bench.py             # 打印各界面 × 日夜主题的整帧耗时
 ```
 
@@ -198,6 +198,10 @@ python tools/perf_bench.py             # 打印各界面 × 日夜主题的整�
 | 飞行中的一帧（线正沿自身折线滑出，尾迹逐格点亮） | 放大后拖到一侧（可见区只剩棋盘的一部分） |
 |---|---|
 | ![飞出](assets/screenshots/playing_flying.png) | ![缩放拖动](assets/screenshots/playing_zoom_pan.png) |
+
+| 被挡住的一帧（弹出「被挡住了！」、红心少一颗，那支箭从此留下暗红标记） | 游戏菜单（撤销 / 提示 / AI 自动求解 / 选关 / 返回首页） |
+|---|---|
+| ![被挡](assets/screenshots/playing_blocked.png) | ![菜单](assets/screenshots/menu.png) |
 
 | 设置面板 | 日间主题的通关结算 |
 |---|---|
