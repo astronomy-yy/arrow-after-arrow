@@ -44,11 +44,35 @@ def main():
     game.state = GameState.START
     shoot(game, "start.png")
 
-    game.state = GameState.LEVEL_SELECT
+    # 规则介绍页
+    game.open_rules()
+    shoot(game, "rules.png")
+
+    # 基础玩法选关
+    game.open_basic_select()
     game.save.data["cleared"] = [1, 2]
     game.save.data["stars"] = {"1": 3, "2": 2}
     shoot(game, "level_select.png")
 
+    # 字母玩法选关（先点亮几个字母，网格上才有星）
+    game.save.data["cleared"] = [1, 2, "A", "B", "C", "D", "E"]
+    game.save.data["stars"] = {"1": 3, "2": 2, "A": 3, "B": 2, "C": 3,
+                               "D": 1, "E": 2}
+    game.open_letter_select()
+    shoot(game, "letter_select.png")
+
+    # 字母关盘面：整盘铺成一个字母
+    for index in (0, 12):
+        game.use_track("letter")
+        game.level_index = index
+        level = game.letter_levels[index]
+        game.level_number = level["id"]
+        game._load_level(level)
+        game.state = GameState.PLAYING
+        game._compute_geometry()
+        shoot(game, "playing_letter_%s.png" % level["letter"].lower())
+
+    game.use_track("basic")
     shots = [(0, "playing_level1.png"), (2, "playing_level3.png"),
              (8, "playing_level9.png"), (11, "playing_level12.png")]
     for index, name in shots:
@@ -120,6 +144,12 @@ def main():
     game.stars = 2
     game.state = GameState.LEVEL_CLEAR
     shoot(game, "level_clear_day.png")
+
+    # 日间主题的规则页与字母选关：浅底上艺术字 / 胶囊是否还压得住
+    game.open_rules()
+    shoot(game, "rules_day.png")
+    game.open_letter_select()
+    shoot(game, "letter_select_day.png")
 
     pygame.quit()
 

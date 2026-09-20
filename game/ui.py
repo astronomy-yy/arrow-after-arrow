@@ -34,7 +34,7 @@ class Button:
 
     def __init__(self, center, size, text, callback, font,
                  base_color=None, hover_color=None, pressed_color=None,
-                 text_color=None, radius=14, kind="primary"):
+                 text_color=None, radius=14, kind="primary", icon=None):
         self.rect = pygame.Rect(0, 0, size[0], size[1])
         self.rect.center = center
         self.text = text
@@ -46,6 +46,8 @@ class Button:
         self.text_color = text_color
         self.radius = radius
         self.kind = kind
+        # 可选图标：给了就在文字左侧画一个（game/icons.py 里的函数）
+        self.icon = icon
         self.hovered = False
         self.pressed = False
 
@@ -97,9 +99,24 @@ class Button:
             surface, rect, self.radius,
             fill_top=top, fill_bottom=bottom, border=line, border_width=2,
             sheen=None if self.kind == "ghost" else pal.sheen, shadow=shadow)
-        paint.text_shadow(surface, self.font, self.text, text_color,
-                          center=rect.center, shadow=(4, 8, 20), alpha=90,
-                          offset=(0, 1))
+        if self.icon is None:
+            paint.text_shadow(surface, self.font, self.text, text_color,
+                              center=rect.center, shadow=(4, 8, 20), alpha=90,
+                              offset=(0, 1))
+            return
+        # 有图标时「图标 + 文字」整体居中，图标左、文字右
+        label = self.font.render(self.text, True, text_color)
+        icon_size = rect.height * 0.46
+        gap = max(10, rect.height * 0.18)
+        total = icon_size + gap + label.get_width()
+        left = rect.centerx - total / 2.0
+        self.icon(surface, (left + icon_size / 2.0, rect.centery), icon_size,
+                  text_color)
+        paint.text_shadow(
+            surface, self.font, self.text, text_color,
+            center=(left + icon_size + gap + label.get_width() / 2.0,
+                    rect.centery),
+            shadow=(4, 8, 20), alpha=90, offset=(0, 1))
 
 
 class IconButton:

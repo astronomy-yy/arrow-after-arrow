@@ -236,3 +236,70 @@ def bulb(surface, center, size, color, thickness=2):
                      (cx + radius * 0.5, cy + radius * 1.0), thickness)
     pygame.draw.line(surface, color, (cx - radius * 0.36, cy + radius * 1.35),
                      (cx + radius * 0.36, cy + radius * 1.35), thickness)
+
+
+# --------------------------------------------------------------------------
+# 开始页四个入口的图标
+# --------------------------------------------------------------------------
+
+def book(surface, center, size, color, thickness=2):
+    """打开的书：书脊 + 两页外框，各带一道横线（规则介绍）。"""
+    cx, cy = center
+    half = size * 0.34
+    top = cy - size * 0.26
+    bottom = cy + size * 0.26
+    pygame.draw.line(surface, color, (cx, top), (cx, bottom), thickness)
+    for sign in (-1, 1):
+        x = cx + sign * half
+        pygame.draw.line(surface, color, (cx, top),
+                         (x, top + size * 0.13), thickness)
+        pygame.draw.line(surface, color, (x, top + size * 0.13), (x, bottom),
+                         thickness)
+        pygame.draw.line(surface, color, (x, bottom),
+                         (cx, bottom - size * 0.07), thickness)
+        line = max(1, thickness - 1)
+        y = cy + size * 0.02
+        pygame.draw.line(surface, color, (cx + sign * size * 0.10, y),
+                         (cx + sign * half * 0.72, y), line)
+
+
+def play(surface, center, size, color, thickness=2):
+    """圆里一个三角（基础玩法）。"""
+    cx, cy = center
+    radius = size * 0.36
+    if thickness > 1:
+        pygame.draw.circle(surface, color, (int(cx), int(cy)), int(radius),
+                           thickness)
+    pygame.draw.polygon(surface, color, [
+        (cx - radius * 0.26, cy - radius * 0.44),
+        (cx + radius * 0.48, cy),
+        (cx - radius * 0.26, cy + radius * 0.44),
+    ])
+
+
+def letter_a(surface, center, size, color, thickness=2):
+    """两条斜线加一横，就是一个字母 A（字母玩法）。"""
+    cx, cy = center
+    half = size * 0.32
+    top = cy - size * 0.30
+    bottom = cy + size * 0.30
+    pygame.draw.line(surface, color, (cx - half, bottom), (cx, top), thickness)
+    pygame.draw.line(surface, color, (cx + half, bottom), (cx, top), thickness)
+    cross = cy + size * 0.07
+    pygame.draw.line(surface, color, (cx - half * 0.60, cross),
+                     (cx + half * 0.60, cross), thickness)
+
+
+def dice(surface, center, size, color, thickness=2):
+    """圆角方块加三个点（随机关卡）。"""
+    cx, cy = center
+    half = size * 0.32
+    rect = pygame.Rect(0, 0, int(half * 2), int(half * 2))
+    rect.center = (int(cx), int(cy))
+    pygame.draw.rect(surface, color, rect, thickness,
+                     border_radius=int(size * 0.10))
+    dot = max(1, int(size * 0.055))
+    for (dx, dy) in ((-1, -1), (0, 0), (1, 1)):
+        pygame.draw.circle(surface, color,
+                           (int(cx + dx * half * 0.44),
+                            int(cy + dy * half * 0.44)), dot)

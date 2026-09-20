@@ -41,7 +41,7 @@
 import random
 
 from game.arrow import DIRECTION_DELTA
-from game.shapes import cells_of, is_connected
+from game.shapes import cells_of, is_connected, level_cells
 
 DIRS = ((0, 1), (0, -1), (1, 0), (-1, 0))
 
@@ -181,18 +181,21 @@ def _build_once(rows, cols, mask, rng, palette_size, style=None):
 
 def build_level(rows, cols, shape, seed, name="", mistakes=3,
                 time_limit=240, palette_size=10, min_fill=0.0, max_free=None,
-                max_attempts=6, style=None):
+                max_attempts=6, style=None, letter=None, mask=None):
     """多次尝试，取「满足难度约束且铺得最满」的一关。
 
     - ``min_fill``：填充率下限；
     - ``max_free``：开局可飞箭数的占比上限。设成 0.3 就代表「开局最多
       三成的箭能直接飞」，剩下的必须靠推理排出先后。None = 不限制。
+    - ``letter`` / ``mask``：字母关用。``shape="letter"`` 时遮罩由点阵字模
+      栅格化而来，连通性按八连通判定（斜笔是对角相接的）。
 
     限制无法满足时（造型太小 / 运气差）会退而取综合分最高的一版，
     绝不会返回不可通关的关卡。
     """
-    mask = cells_of(rows, cols, shape)
-    if not is_connected(mask) or len(mask) < 10:
+    if mask is None:
+        mask = cells_of(rows, cols, shape, letter)
+    if not is_connected(mask, diagonal=shape == "letter") or len(mask) < 10:
         return None
 
     best = None         # 满足约束里填充率最高的
@@ -216,6 +219,8 @@ def build_level(rows, cols, shape, seed, name="", mistakes=3,
             # 放箭顺序的倒序就是通关顺序
             "solution": list(range(len(placed) - 1, -1, -1)),
         }
+        if letter:
+            level["letter"] = letter
         if not verify_solution(level):
             continue
 
@@ -306,7 +311,7 @@ def board_stats(level):
 
 def fill_ratio(level):
     """线段占遮罩格子的比例（参考图的关卡大约在 0.85 ~ 0.95）。"""
-    mask = cells_of(level["rows"], level["cols"], level.get("shape", "rect"))
+    mask = level_cells(level)
     used = sum(len(a["cells"]) for a in level["arrows"])
     return used / len(mask) if mask else 0.0
 

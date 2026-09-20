@@ -6,8 +6,12 @@
 - 顶栏：设置、日夜拨杆、关卡号、红心、倒计时，右侧手柄 / 菜单 / 关卡选择；
 - 底栏：金币提示、缩放滑杆、辅助线开关。
 
+开始页有四个入口：规则介绍、基础玩法（12 关）、字母玩法（26 个字母各一关）、
+随机关卡（随机造型，每次都不一样）。
+
 扩展功能：AI 求解、提示、撤销、倒计时星级、关卡选择、随机关卡、存档、音效。
-快捷键：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / N 随机关卡 / Esc 菜单与返回。
+快捷键：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单与返回
+（随机关卡从开始页进入，不再占用字母键）。
 视图操作：放大后按住棋盘拖动（左键拖过 DRAG_THRESHOLD 即判为拖动，不会误点飞
 线段）、中键或右键直接拖、滚轮缩放、方向键微调、0 键复位。
 """
@@ -16,7 +20,7 @@ import sys
 
 import pygame
 
-from game import audio, icons, paint, theme
+from game import audio, icons, letters as letters_module, paint, theme
 from game.animations import (
     TOAST_DURATION,
     BlockedFeedback,
@@ -34,6 +38,7 @@ from game.board import Board
 from game.generator import random_level as make_random_level
 from game.hud import Hud
 from game.level import LEVELS
+from game.level_letters import LEVELS as LETTER_LEVELS
 from game.settings import (
     BOARD_MARGIN_X,
     BOARD_MARGIN_Y,
@@ -60,7 +65,7 @@ from game.settings import (
     ZOOM_IN_CENTER,
     ZOOM_OUT_CENTER,
 )
-from game.shapes import cells_of
+from game.shapes import level_cells
 from game.solver import solve
 from game.states import GameState
 from game.storage import Save
@@ -79,6 +84,20 @@ DRAG_THRESHOLD = 8          # 按住后位移超过这么多逻辑像素就算�
 AUTO_STEP_INTERVAL = 0.30       # AI 自动求解时每隔多久点一支箭
 MAX_FRAME_DT = 0.05         # 单帧步进上限：卡一下也不让飞行线「瞬移」
 STAR_TABLE = {0: 3, 1: 2, 2: 2}
+
+# 规则页的按键功能表（左列、右列）。改按键就改这里，界面与测试都跟着走。
+# 注意：随机关卡已经挪到开始页的入口按钮上，不再占用字母键。
+KEY_HINTS = (
+    (("U", "撤销一步"), ("滚轮", "缩放棋盘（也可用 - 与 =）")),
+    (("H", "提示一步（消耗金币）"), ("拖动", "放大后按住棋盘拖动")),
+    (("A", "AI 自动求解本关"), ("方向键", "微调棋盘位置")),
+    (("G", "显示 / 隐藏辅助线"), ("0", "复位缩放与位置")),
+    (("Esc", "打开菜单 / 返回上一级"), None),
+)
+
+# 开始页四个入口的按钮中心 y（标题在 248、副标题在 322）
+START_BUTTON_Y = (470, 566, 662, 758)
+START_STATS_RECT = (320 - 214, 846, 428, 196)
 
 
 def desktop_size():
@@ -177,7 +196,13 @@ class Game:
         self.coins = self.save.data.get("coins", COIN_START)
 
         # ---- 关卡 ----
-        self.levels = list(LEVELS)
+        # 开始页有三个玩法：基础（12 关）、字母（26 关）、随机（每次现场生成）。
+        # self.levels 始终指向「当前玩法用的那份关卡列表」；玩随机关卡时它仍
+        # 指着 basic 那份，于是随机关不在列表里、也就不会被记进存档进度。
+        self.basic_levels = list(LEVELS)
+        self.letter_levels = list(LETTER_LEVELS)
+        self.levels = self.basic_levels
+        self.track = "basic"
         self.level_index = 0
         self.level_number = 1
         self.current_level = self.levels[0]
@@ -186,6 +211,7 @@ class Game:
 
         # ---- 玩法状态 ----
         self.state = GameState.START
+        self.rules_back = GameState.START   # 规则页从哪儿来，就回哪儿去
         self.time_left = float(self.current_level.get("time_limit", 240))
         self.hints_used = 0
         self.undos_used = 0
@@ -243,11 +269,25 @@ class Game:
 
         self.hud.zoom_slider.value = (1.0 - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)
 
-        self.start_button = Button((cx, 750), (240, 66), "开始游戏",
-                                   self.start_game, self.font_big)
-        self.select_from_start = Button((cx, 838), (240, 54), "关卡选择",
-                                        self.open_level_select,
-                                        self.font_normal, kind="ghost")
+        # 开始页的四个入口
+        rules_y, basic_y, letter_y, random_y = START_BUTTON_Y
+        self.rules_button = Button((cx, rules_y), (340, 84), "规则介绍",
+                                   self.open_rules, self.font_big,
+                                   kind="ghost", icon=icons.book)
+        self.basic_button = Button((cx, basic_y), (340, 84), "基础玩法",
+                                   self.open_basic_select, self.font_big,
+                                   icon=icons.play)
+        self.letter_button = Button((cx, letter_y), (340, 84), "字母玩法",
+                                    self.open_letter_select, self.font_big,
+                                    icon=icons.letter_a)
+        self.random_button = Button((cx, random_y), (340, 84), "随机关卡",
+                                    self.play_random, self.font_big,
+                                    kind="ghost", icon=icons.dice)
+        self.start_buttons = (self.rules_button, self.basic_button,
+                              self.letter_button, self.random_button)
+        self.rules_home_button = Button((cx, 1042), (216, 60), "返回",
+                                        self.close_rules, self.font_normal,
+                                        kind="ghost")
         self.next_button = Button((cx - 128, 672), (200, 56), "下一关",
                                   self.next_level, self.font_normal)
         self.retry_button = Button((cx - 128, 672), (216, 56), "重新开始",
@@ -407,15 +447,65 @@ class Game:
         return None
 
     def _mask_cells(self):
-        return cells_of(self.board.rows, self.board.cols,
-                        self.current_level.get("shape", "rect"))
+        return level_cells(self.current_level)
 
     # ---------------- 状态切换 ----------------
+    def use_track(self, track):
+        """切换当前玩法：self.levels 指向那一份关卡列表。"""
+        self.track = track
+        self.levels = (self.letter_levels if track == "letter"
+                       else self.basic_levels)
+
     def start_game(self):
+        """从基础玩法的第 1 关直接开一局。"""
+        self.use_track("basic")
         self.level_index = 0
         self.level_number = self.levels[0].get("id", 1)
         self._load_level(self.levels[0])
         self.state = GameState.PLAYING
+
+    def open_rules(self):
+        """规则介绍：记住从哪儿来，返回时回原处。"""
+        self.rules_back = (self.state if self.state != GameState.RULES
+                           else GameState.START)
+        self.menu = None
+        self._clear_effects()
+        self.state = GameState.RULES
+
+    def close_rules(self):
+        """关掉规则页：回开始页，或者回打开规则前的那一屏。"""
+        if self.rules_back == GameState.PLAYING:
+            self.state = GameState.PLAYING
+        else:
+            self.back_home()
+
+    def open_basic_select(self):
+        self.use_track("basic")
+        self.menu = None
+        self._clear_effects()
+        self.state = GameState.BASIC_SELECT
+
+    def open_letter_select(self):
+        self.use_track("letter")
+        self.menu = None
+        self._clear_effects()
+        self.state = GameState.LETTER_SELECT
+
+    def open_select(self):
+        """菜单里的「关卡选择」：进当前玩法对应的那一页。"""
+        if self.track == "letter":
+            self.open_letter_select()
+        else:
+            self.open_basic_select()
+
+    # 旧名字留着：菜单与测试都用惯了
+    open_level_select = open_basic_select
+
+    def play_random(self):
+        """随机玩法：现场生成一关开打（不进选关页，也不记进度）。"""
+        self.use_track("basic")
+        self.menu = None
+        self.new_random_level()
 
     def next_level(self):
         if self.level_index + 1 < len(self.levels):
@@ -443,11 +533,6 @@ class Game:
         self.menu = None
         self.save.flush()
         self.state = GameState.START
-
-    def open_level_select(self):
-        self.menu = None
-        self._clear_effects()
-        self.state = GameState.LEVEL_SELECT
 
     def select_level(self, index):
         self.level_index = index
@@ -495,14 +580,15 @@ class Game:
 
     def open_menu(self):
         self.menu = MenuPanel(
-            (WINDOW_WIDTH // 2, 496), (380, 412), "菜单",
+            (WINDOW_WIDTH // 2, 520), (380, 470), "菜单",
             [
                 ("撤销一步", self.undo, self.board.can_undo),
                 ("提示（%d 金币）" % HINT_COST, self.use_hint,
                  self.coins >= HINT_COST and self.board.remaining > 0),
                 ("AI 自动求解", self.auto_solve, self.board.remaining > 1),
                 ("重新开始本关", self.restart_level),
-                ("关卡选择", self.open_level_select),
+                ("关卡选择", self.open_select),
+                ("规则介绍", self.open_rules),
                 ("返回首页", self.back_home),
             ],
             (self.font_big, self.font_normal),
@@ -881,7 +967,10 @@ class Game:
         if key == pygame.K_ESCAPE:
             if self.menu is not None:
                 self.menu = None
-            elif self.state in (GameState.LEVEL_SELECT,):
+            elif self.state == GameState.RULES:
+                self.close_rules()
+            elif self.state in (GameState.BASIC_SELECT,
+                                GameState.LETTER_SELECT):
                 self.back_home()
             elif self.state == GameState.PLAYING:
                 self.open_menu()
@@ -896,8 +985,6 @@ class Game:
             self.use_hint()
         elif key == pygame.K_g:
             self.toggle_guide()
-        elif key == pygame.K_n:
-            self.new_random_level()
         elif key == pygame.K_a:
             self.auto_solve()
         elif key == pygame.K_LEFT:
@@ -915,20 +1002,37 @@ class Game:
         elif key in (pygame.K_0, pygame.K_KP0):
             self.reset_view()
 
+    def _grid_clicked(self, rects, event):
+        """网格里被点中的格子下标；没点中返回 None。"""
+        if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
+            return None
+        for index, rect in enumerate(rects):
+            if rect.collidepoint(event.pos):
+                return index
+        return None
+
     def _dispatch_event(self, event):
         if self.menu is not None:
             self.menu.handle_event(event)
             return
         if self.state == GameState.START:
-            self.start_button.handle_event(event)
-            self.select_from_start.handle_event(event)
+            for button in self.start_buttons:
+                button.handle_event(event)
             return
-        if self.state == GameState.LEVEL_SELECT:
+        if self.state == GameState.RULES:
+            self.rules_home_button.handle_event(event)
+            return
+        if self.state == GameState.BASIC_SELECT:
             self.back_button.handle_event(event)
-            for index, rect in enumerate(self._level_rects()):
-                if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
-                        and rect.collidepoint(event.pos)):
-                    self.select_level(index)
+            index = self._grid_clicked(self._level_rects(), event)
+            if index is not None:
+                self.select_level(index)
+            return
+        if self.state == GameState.LETTER_SELECT:
+            self.back_button.handle_event(event)
+            index = self._grid_clicked(self._letter_rects(), event)
+            if index is not None:
+                self.select_level(index)
             return
         if self.state == GameState.PLAYING:
             # 先给顶栏 / 底栏的控件；被它们吃掉的事件不要再落到棋盘上，
@@ -1004,7 +1108,7 @@ class Game:
         self.stars = STAR_TABLE.get(penalty, 1)
         self.coins += COIN_REWARD_CLEAR
         self.save.data["coins"] = self.coins
-        # 只有主线关卡才记进度，随机关卡不写进存档
+        # 只有列表里的关卡才记进度：随机关卡是现场生成的，不写进存档
         if self.current_level is self.levels[self.level_index]:
             self.save.mark_clear(self.current_level.get("id",
                                                         self.level_index + 1),
@@ -1031,8 +1135,14 @@ class Game:
         if self.state == GameState.START:
             self._draw_start()
             return
-        if self.state == GameState.LEVEL_SELECT:
+        if self.state == GameState.RULES:
+            self._draw_rules()
+            return
+        if self.state == GameState.BASIC_SELECT:
             self._draw_level_select()
+            return
+        if self.state == GameState.LETTER_SELECT:
+            self._draw_letter_select()
             return
 
         self._draw_board()
@@ -1127,62 +1237,171 @@ class Game:
         pal = theme.get()
         cx = WINDOW_WIDTH // 2
 
-        # 标题后面再压一团柔光：标题从背景里「亮」出来
-        paint.blit_glow(self.canvas, (cx, 286), 300, pal.glow, 70, 2.0)
-        paint.text_shadow(self.canvas, self.font_title, "一箭又一箭", pal.text,
-                          center=(cx, 258), shadow=(6, 12, 30), alpha=130,
-                          offset=(0, 3))
-        paint.text_shadow(self.canvas, self.font_normal, "Arrow After Arrow",
-                          pal.text_dim, center=(cx, 312), shadow=(4, 8, 20),
+        # 标题后面再压一团柔光：艺术字从背景里「亮」出来
+        paint.blit_glow(self.canvas, (cx, 248), 330, pal.glow, 76, 2.0)
+        paint.draw_art_text(
+            self.canvas, self.font_title, "一箭又一箭", (cx, 248),
+            top=pal.art_top, bottom=pal.art_bottom, outline=pal.art_outline,
+            outline_width=3, highlight=pal.art_gloss,
+            shadow=(14, 16, 34), shadow_offset=(0, 5))
+        paint.text_shadow(self.canvas, self.font_normal, "ARROW AFTER ARROW",
+                          pal.text_dim, center=(cx, 322), shadow=(4, 8, 20),
                           alpha=90, offset=(0, 1))
 
-        # 规则说明装进一张卡片，文字不再是「飘在空背景上」
-        rules_card = pygame.Rect(24, 366, WINDOW_WIDTH - 48, 176)
-        paint.draw_panel(self.canvas, rules_card, 22)
-        rules = [
-            "点击彩色线段，让它沿自身轨迹从箭头方向滑出",
-            "箭头方向上若有其他线段，会被弹回，消耗一颗红心",
-            "清空本关全部线段即可通关，红心耗尽或超时则失败",
-        ]
-        for i, line in enumerate(rules):
-            self._draw_text(line, self.font_normal, pal.text_dim,
-                            center=(cx, rules_card.top + 46 + i * 44))
+        for button in self.start_buttons:
+            button.draw(self.canvas)
 
-        # 进度卡片：三行数值各带一个小图标
-        stats_card = pygame.Rect(cx - 154, 560, 308, 146)
-        paint.draw_panel(self.canvas, stats_card, 20)
-        cleared = len(self.save.data["cleared"])
+        self._draw_start_stats()
+
+        self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 · 方向键微调 / 0 复位",
+                        self.font_small, pal.text_dim, center=(cx, 1082))
+        self._draw_text("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单",
+                        self.font_small, pal.text_dim, center=(cx, 1112))
+
+    def _cleared_count(self, levels):
+        """一份关卡列表里已通关的关数。"""
+        return sum(1 for level in levels
+                   if self.save.is_cleared(level.get("id")))
+
+    def _draw_progress_bar(self, rect, ratio):
+        """一条细进度条：凹槽 + 已填充段，与选关页用的是同一套画法。"""
+        pal = theme.get()
+        paint.draw_card(self.canvas, rect, rect.height // 2,
+                        fill_top=paint.mix(pal.slider_track, pal.card_line,
+                                           0.5),
+                        fill_bottom=pal.slider_track,
+                        border=pal.surface_line, border_width=1, alpha=235)
+        width = int(rect.width * max(0.0, min(1.0, ratio)))
+        if width < 6:
+            return
+        fill = pygame.Rect(rect.left, rect.top, width, rect.height)
+        pygame.draw.rect(self.canvas, pal.accent, fill,
+                         border_radius=rect.height // 2)
+        upper = pygame.Rect(fill.left, fill.top, fill.width,
+                            fill.height // 2 + 1)
+        pygame.draw.rect(self.canvas, paint.mix(pal.accent, (255, 255, 255),
+                                                0.4), upper,
+                         border_radius=rect.height // 2)
+
+    def _draw_start_stats(self):
+        """开始页的进度卡：两个玩法各一行，外加累计星与金币。"""
+        pal = theme.get()
+        cx = WINDOW_WIDTH // 2
+        card = pygame.Rect(*START_STATS_RECT)
+        paint.draw_panel(self.canvas, card, 22)
+
+        tracks = (
+            ("基础玩法", self._cleared_count(self.basic_levels),
+             len(self.basic_levels)),
+            ("字母玩法", self._cleared_count(self.letter_levels),
+             len(self.letter_levels)),
+        )
+        for index, (label, done, total) in enumerate(tracks):
+            top = card.top + 30 + index * 62
+            self._draw_text(label, self.font_normal, pal.text,
+                            topleft=(card.left + 26, top))
+            self._draw_text("%d / %d" % (done, total), self.font_normal,
+                            pal.text_gold, topleft=(card.right - 96, top))
+            self._draw_progress_bar(
+                pygame.Rect(card.left + 26, top + 34, card.width - 52, 12),
+                done / max(1, total))
+
         stars = sum(int(v) for v in self.save.data["stars"].values())
-        rows = stats_card.top + 38, stats_card.top + 82, stats_card.top + 122
-        self._draw_text("已通关 %d / %d 关" % (cleared, len(self.levels)),
-                        self.font_normal, pal.text, center=(cx, rows[0]))
-        icons.star(self.canvas, (cx - 62, rows[1]), 24, pal.text_gold)
-        self._draw_text("累计 %d 星" % stars, self.font_normal, pal.text_dim,
-                        center=(cx + 10, rows[1]))
-        icons.coin(self.canvas, (cx - 62, rows[2]), 13, pal.coin)
-        self._draw_text("金币 %d" % self.coins, self.font_normal, pal.text_dim,
-                        center=(cx + 10, rows[2]))
+        self._draw_text("累计 %d 星 · 金币 %d" % (stars, self.coins),
+                        self.font_small, pal.text_dim,
+                        center=(cx, card.bottom - 30))
 
-        self.start_button.draw(self.canvas)
-        self.select_from_start.draw(self.canvas)
-        self._draw_text("U 撤销 / H 提示 / A 自动求解 / G 辅助线 / N 随机关卡",
-                        self.font_small, pal.text_dim, center=(cx, 918))
-        self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 / 方向键微调 · 0 复位",
-                        self.font_small, pal.text_dim, center=(cx, 952))
+    def _draw_rules(self):
+        """规则介绍：玩法说明 + 按键功能表 + 三种玩法。"""
+        pal = theme.get()
+        cx = WINDOW_WIDTH // 2
+        paint.blit_glow(self.canvas, (cx, 100), 260, pal.glow, 58, 2.0)
+        paint.text_shadow(self.canvas, self.font_title, "玩法规则", pal.text,
+                          center=(cx, 100), shadow=(6, 12, 30), alpha=130,
+                          offset=(0, 3))
+
+        # ---- 怎么玩 ----
+        how = pygame.Rect(24, 150, WINDOW_WIDTH - 48, 202)
+        paint.draw_panel(self.canvas, how, 22)
+        self._draw_text("怎么玩", self.font_big, pal.text_gold,
+                        topleft=(how.left + 26, how.top + 18))
+        rules = [
+            "点击彩色线段，它会沿着自己的轨迹滑出、再从箭头方向飞出",
+            "箭头方向上有别的线段挡着，就会被弹回来，消耗一颗红心",
+            "清空本关全部线段即通关；红心耗尽或倒计时归零则失败",
+        ]
+        for index, line in enumerate(rules):
+            self._draw_text(line, self.font_normal, pal.text_dim,
+                            topleft=(how.left + 26, how.top + 70 + index * 42))
+
+        # ---- 按键功能表（两列）----
+        keys = pygame.Rect(24, 370, WINDOW_WIDTH - 48, 336)
+        paint.draw_panel(self.canvas, keys, 22)
+        self._draw_text("按键功能", self.font_big, pal.text_gold,
+                        topleft=(keys.left + 26, keys.top + 18))
+        for row_index, row in enumerate(KEY_HINTS):
+            for col_index, item in enumerate(row):
+                if item is None:
+                    continue
+                self._draw_key_hint(keys.left + 26 + col_index * 286,
+                                    keys.top + 76 + row_index * 50,
+                                    item[0], item[1])
+
+        # ---- 三种玩法 ----
+        modes = pygame.Rect(24, 726, WINDOW_WIDTH - 48, 196)
+        paint.draw_panel(self.canvas, modes, 22)
+        self._draw_text("三种玩法", self.font_big, pal.text_gold,
+                        topleft=(modes.left + 26, modes.top + 18))
+        lines = (
+            (icons.play, "基础玩法", "12 关，从小盘到大盘，难度一路递增"),
+            (icons.letter_a, "字母玩法", "26 个字母各一关，整盘铺成一个字母"),
+            (icons.dice, "随机关卡", "随机造型现场生成，每次都不一样"),
+        )
+        for index, (icon, name, desc) in enumerate(lines):
+            y = modes.top + 76 + index * 40
+            icon(self.canvas, (modes.left + 38, y), 22, pal.outline)
+            self._draw_text(name, self.font_normal, pal.text,
+                            topleft=(modes.left + 60, y - 14))
+            self._draw_text(desc, self.font_small, pal.text_dim,
+                            topleft=(modes.left + 176, y - 10))
+
+        self._draw_text("以上玩法都从开始页的按钮进入", self.font_small,
+                        pal.text_dim, center=(cx, 956))
+        self.rules_home_button.draw(self.canvas)
+        self._draw_text("Esc 也可以直接返回", self.font_small, pal.text_dim,
+                        center=(cx, 1086))
+
+    def _draw_key_hint(self, x, y, key, label):
+        """一个按键胶囊 + 右侧说明。"""
+        pal = theme.get()
+        capsule = pygame.Rect(x, y - 16, 62, 32)
+        paint.draw_card(self.canvas, capsule, 9, fill_top=pal.card_top,
+                        fill_bottom=pal.card_bottom, border=pal.surface_line,
+                        border_width=1)
+        self._draw_text(key, self.font_small, pal.text_gold,
+                        center=capsule.center)
+        self._draw_text(label, self.font_small, pal.text_dim,
+                        topleft=(capsule.right + 12, y - 10))
 
     def _level_rects(self):
-        cols = 4
-        size = 124
-        gap = 24
+        return self._grid_rects(len(self.levels), cols=4, size=124, gap=24,
+                                y0=262)
+
+    def _grid_rects(self, count, cols, size, gap, y0):
+        """网格卡片的位置：先按列数算整块宽度，再左右居中。"""
         total_w = cols * size + (cols - 1) * gap
         x0 = (WINDOW_WIDTH - total_w) // 2
-        y0 = 262
         rects = []
-        for index in range(len(self.levels)):
+        for index in range(count):
             row, col = divmod(index, cols)
             rects.append(pygame.Rect(x0 + col * (size + gap),
                                      y0 + row * (size + gap), size, size))
         return rects
+
+    def _letter_rects(self):
+        """字母选关页的 26 个格子（6 列 5 行）。"""
+        return self._grid_rects(len(self.letter_levels), cols=6, size=88,
+                                gap=12, y0=228)
 
     def _draw_level_select(self):
         pal = theme.get()
@@ -1191,7 +1410,7 @@ class Game:
         paint.text_shadow(self.canvas, self.font_title, "选择关卡", pal.text,
                           center=(cx, 116), shadow=(6, 12, 30), alpha=130,
                           offset=(0, 3))
-        cleared = len(self.save.data["cleared"])
+        cleared = self._cleared_count(self.basic_levels)
         self._draw_text("通关上一关即可解锁下一关 · 每关最多三颗星",
                         self.font_small, pal.text_dim, center=(cx, 172))
         self.back_button.draw(self.canvas)
@@ -1237,30 +1456,66 @@ class Game:
         self._draw_text("已通关 %d / %d 关" % (cleared, total),
                         self.font_normal, pal.text,
                         center=(cx, stats.top + 36))
-        track = pygame.Rect(stats.left + 40, stats.top + 62,
-                            stats.width - 80, 14)
-        paint.draw_card(self.canvas, track, track.height // 2,
-                        fill_top=paint.mix(pal.slider_track, pal.card_line,
-                                           0.5),
-                        fill_bottom=pal.slider_track,
-                        border=pal.surface_line, border_width=1, alpha=235)
-        fill = pygame.Rect(track.left, track.top,
-                           int(track.width * cleared / max(1, total)),
-                           track.height)
-        if fill.width >= 6:
-            pygame.draw.rect(self.canvas, pal.accent, fill,
-                             border_radius=fill.height // 2)
-            upper = pygame.Rect(fill.left, fill.top, fill.width,
-                                fill.height // 2 + 1)
-            pygame.draw.rect(self.canvas, paint.mix(pal.accent,
-                                                    (255, 255, 255), 0.4),
-                             upper, border_radius=fill.height // 2)
+        self._draw_progress_bar(
+            pygame.Rect(stats.left + 40, stats.top + 62, stats.width - 80, 14),
+            cleared / max(1, total))
         self._draw_text("累计 %d 星 · 金币 %d" % (stars_total, self.coins),
                         self.font_small, pal.text_dim,
                         center=(cx, stats.top + 102))
 
-        self._draw_text("按 N 或从游戏菜单里选「随机关卡」可以玩新生成的关",
+        self._draw_text("左上角返回开始页，那里还有字母玩法与随机关卡",
                         self.font_small, pal.text_dim, center=(cx, 926))
+
+    def _draw_letter_select(self):
+        """字母玩法选关：26 个字母铺成一页，不像基础玩法那样逐关解锁。"""
+        pal = theme.get()
+        cx = WINDOW_WIDTH // 2
+        paint.blit_glow(self.canvas, (cx, 110), 260, pal.glow, 58, 2.0)
+        paint.text_shadow(self.canvas, self.font_title, "字母玩法", pal.text,
+                          center=(cx, 110), shadow=(6, 12, 30), alpha=130,
+                          offset=(0, 3))
+        done = self._cleared_count(self.letter_levels)
+        self._draw_text("26 个字母各一关，随意挑一个开始",
+                        self.font_small, pal.text_dim, center=(cx, 166))
+        self.back_button.draw(self.canvas)
+
+        for index, rect in enumerate(self._letter_rects()):
+            level = self.letter_levels[index]
+            letter = level.get("letter", level.get("id", "?"))
+            stars = self.save.stars_of(level.get("id"))
+            paint.draw_card(self.canvas, rect, 16, fill_top=pal.card_top,
+                            fill_bottom=pal.card_bottom,
+                            border=pal.card_line, border_width=2,
+                            sheen=pal.sheen,
+                            shadow=(10, 90, pal.card_shadow[2], 6))
+            self._draw_text(letter, self.font_num, pal.text,
+                            center=(rect.centerx, rect.centery - 12))
+            if stars:
+                for i in range(3):
+                    icons.star(self.canvas,
+                               (rect.centerx - 18 + i * 18,
+                                rect.bottom - 18), 14,
+                               pal.text_gold if i < stars else pal.dot)
+            else:
+                self._draw_text("未通关", self.font_small, pal.text_dim,
+                                center=(rect.centerx, rect.bottom - 18))
+
+        stats = pygame.Rect(cx - 190, 826, 380, 124)
+        paint.draw_panel(self.canvas, stats, 20)
+        total = len(self.letter_levels)
+        stars_total = sum(self.save.stars_of(level.get("id"))
+                          for level in self.letter_levels)
+        self._draw_text("已通关 %d / %d 个字母" % (done, total),
+                        self.font_normal, pal.text,
+                        center=(cx, stats.top + 34))
+        self._draw_progress_bar(
+            pygame.Rect(stats.left + 40, stats.top + 58, stats.width - 80, 14),
+            done / max(1, total))
+        self._draw_text("已拿到 %d 颗星（共 %d 颗）" % (stars_total, total * 3),
+                        self.font_small, pal.text_gold,
+                        center=(cx, stats.top + 98))
+        self._draw_text("左上角返回开始页 · 玩腻了可以试试随机关卡",
+                        self.font_small, pal.text_dim, center=(cx, 1002))
 
     def _draw_overlay(self, title, stars, buttons, hint, title_color=None):
         pal = theme.get()

@@ -363,10 +363,11 @@ def _colors_of(game, step=24):
 
 @pytest.mark.parametrize("name", ["night", "day"])
 def test_every_screen_renders_with_depth(game, name):
-    """六个状态 × 两套主题：不崩，而且背景不是一块纯色。"""
+    """八个状态 × 两套主题：不崩，而且背景不是一块纯色。"""
     theme.set_theme(name)
     game.start_game()
-    for state in (GameState.START, GameState.LEVEL_SELECT, GameState.PLAYING,
+    for state in (GameState.START, GameState.RULES, GameState.BASIC_SELECT,
+                  GameState.LETTER_SELECT, GameState.PLAYING,
                   GameState.LEVEL_CLEAR, GameState.GAME_OVER,
                   GameState.ALL_CLEAR):
         game.state = state
@@ -417,15 +418,52 @@ def test_menu_panel_hover_highlight_differs(game):
         pygame.image.tobytes(hover, "RGB")
 
 
-def test_start_screen_buttons_do_not_overlap_the_stat_card(game):
-    """开始页的排版：规则卡 → 进度卡 → 按钮，谁都不许压到谁。"""
+def test_start_screen_layout_keeps_everything_apart(game):
+    """开始页排版：标题 → 四个入口按钮 → 进度卡 → 底部提示，互不重叠。"""
     game.state = GameState.START
     game._draw()
-    stats_bottom = 560 + 146
-    assert game.start_button.rect.top >= stats_bottom, \
-        (game.start_button.rect, stats_bottom)
-    assert game.select_from_start.rect.top >= game.start_button.rect.bottom
-    assert game.select_from_start.rect.bottom <= 1140
+    buttons = list(game.start_buttons)
+    assert len(buttons) == 4
+    for index, button in enumerate(buttons):
+        assert button.rect.bottom <= 1140, button.rect
+        if index:
+            # 上下相邻，且留得出间距
+            assert button.rect.top >= buttons[index - 1].rect.bottom + 8, \
+                (buttons[index - 1].rect, button.rect)
+    stats = pygame.Rect(320 - 214, 846, 428, 196)
+    assert buttons[-1].rect.bottom <= stats.top, (buttons[-1].rect, stats)
+    assert stats.bottom <= 1140
+
+
+def test_art_title_is_drawn_above_the_buttons(game):
+    """标题是艺术字：有渐变（上亮下暗）与描边，而且真的画在按钮上方。"""
+    game.state = GameState.START
+    game._draw()
+    pal = theme.get()
+    title = paint.art_text(
+        game.font_title, "一箭又一箭", top=pal.art_top,
+        bottom=pal.art_bottom, outline=pal.art_outline, outline_width=3,
+        highlight=pal.art_gloss, shadow=(14, 16, 34), shadow_offset=(0, 5))
+    size = game.font_title.size("一箭又一箭")
+    # 外描边 + 投影占了余量，图比裸文字大一圈
+    assert title.get_width() > size[0] and title.get_height() > size[1]
+
+    pixels = [(x, y) for y in range(title.get_height())
+              for x in range(title.get_width())
+              if title.get_at((x, y))[3] > 200]
+    assert len(pixels) > 800, len(pixels)
+    ys = [p[1] for p in pixels]
+
+    def mean(start, end):
+        group = [title.get_at(pos) for pos in pixels if start <= pos[1] < end]
+        return tuple(sum(p[i] for p in group) / len(group) for i in range(3))
+
+    lighter = mean(min(ys), min(ys) + 8)
+    darker = mean(max(ys) - 8, max(ys) + 1)
+    assert sum(lighter) > sum(darker), (lighter, darker)   # 上亮下暗
+    edge = [c for pos in pixels for c in (title.get_at(pos),) if c[0] < 160]
+    assert edge, "找不到描边色像素"
+    assert game.start_buttons[0].rect.top > 300
 
 
 def test_redraw_is_not_pathologically_slow(game):

@@ -63,6 +63,11 @@ class Palette:
     btn_line: tuple
     btn_text: tuple
     accent: tuple          # 强调色（选中 / 悬停描边）
+    # ---- 艺术字（开始页标题）----
+    art_top: tuple         # 渐变上端
+    art_bottom: tuple      # 渐变下端
+    art_outline: tuple     # 外描边
+    art_gloss: tuple       # 顶部高光
 
 
 NIGHT = Palette(
@@ -106,6 +111,11 @@ NIGHT = Palette(
     btn_line=(136, 184, 255),
     btn_text=(255, 255, 255),
     accent=(120, 214, 240),
+    # 深蓝紫底上金色标题最跳，描边压到近黑的棕
+    art_top=(255, 238, 176),
+    art_bottom=(236, 158, 38),
+    art_outline=(84, 44, 8),
+    art_gloss=(255, 255, 236),
 )
 
 DAY = Palette(
@@ -149,6 +159,11 @@ DAY = Palette(
     btn_line=(160, 202, 255),
     btn_text=(255, 255, 255),
     accent=(38, 176, 164),
+    # 浅底上金色要压深一档，否则整行标题发白看不清
+    art_top=(248, 190, 44),
+    art_bottom=(198, 108, 10),
+    art_outline=(112, 58, 6),
+    art_gloss=(255, 248, 214),
 )
 
 THEMES = {"night": NIGHT, "day": DAY}

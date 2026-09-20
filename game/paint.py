@@ -300,3 +300,114 @@ def text_shadow(target, font, text, color, center=None, topleft=None,
                            rect.top + int(offset[1])))
     target.blit(image, rect)
     return rect
+
+
+# --------------------------------------------------------------------------
+# 艺术字：渐变填充 + 外描边 + 顶部高光 + 投影
+# --------------------------------------------------------------------------
+
+# 艺术字要放大得更多：描边是在放大后的空间里铺的，倍数越大描边越圆润
+ART_SUPERSAMPLE = 3
+
+
+def _disc_offsets(radius):
+    """半径 radius 内所有整数偏移点，按离中心由近到远排序。
+
+    描边就是把这个圆盘上的每个点都盖一遍。用圆盘（而不是 4 / 8 个方向）
+    是为了让斜向的笔画也有足量的覆盖 —— 只铺 8 个方向的话，描边会在
+    斜边上被啃出缺口。
+    """
+    radius = max(0, int(radius))
+    points = [(dx, dy) for dy in range(-radius, radius + 1)
+              for dx in range(-radius, radius + 1)
+              if dx * dx + dy * dy <= radius * radius]
+    points.sort(key=lambda p: (p[0] * p[0] + p[1] * p[1], p[1], p[0]))
+    return points
+
+
+def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
+             highlight=None, shadow=None, shadow_offset=(0, 4), alpha=255):
+    """艺术字：竖向渐变填充 + 外描边 + 顶部高光 + 投影。
+
+    做法是「先放大、再加工、最后缩回」：把文字渲染结果放大
+    ``ART_SUPERSAMPLE`` 倍，描边在这个各向同性的空间里按圆盘铺出来
+    （每处等宽、拐角不缺角），渐变与高光都拿文字的 alpha 当遮罩乘上去，
+    最后缩回原尺寸 —— 描边与斜边的锯齿一并被磨平。
+
+    返回的 surface 已经**把文字摆在正中间**，直接
+    ``surface.get_rect(center=...)`` 就能摆位置。
+    """
+    top = rgb(top)
+    bottom = rgb(bottom if bottom is not None else top)
+    outline = rgb(outline) if outline else None
+    highlight = rgb(highlight) if highlight else None
+    shadow = rgb(shadow) if shadow else None
+    outline_width = max(0, int(outline_width))
+    shadow_offset = (int(shadow_offset[0]), int(shadow_offset[1]))
+    alpha = max(0, min(255, int(alpha)))
+    key = ("art", font, text, top, bottom, outline, outline_width, highlight,
+           shadow, shadow_offset, alpha)
+
+    def build():
+        base = font.render(text, True, (255, 255, 255))
+        width, height = base.get_size()
+        if width <= 0 or height <= 0:
+            return pygame.Surface((1, 1), pygame.SRCALPHA)
+        s = ART_SUPERSAMPLE
+        # 四周留出描边 + 投影需要的余量，留白对上下左右一致，中心才对得准
+        pad = outline_width + 2 + max(abs(shadow_offset[0]),
+                                      abs(shadow_offset[1]))
+        big = pygame.transform.smoothscale(base, (width * s, height * s))
+        canvas = pygame.Surface(((width + pad * 2) * s, (height + pad * 2) * s),
+                                pygame.SRCALPHA)
+        canvas.fill((0, 0, 0, 0))
+        origin = (pad * s, pad * s)
+
+        def stamp(color, radius, shift=(0, 0)):
+            """把文字染成 color，按 radius 铺满整个圆盘。"""
+            tinted = big.copy()
+            tinted.fill((*color, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            layer = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+            if radius <= 0:
+                layer.blit(tinted, (origin[0] + shift[0], origin[1] + shift[1]))
+                return layer
+            for (dx, dy) in _disc_offsets(radius):
+                layer.blit(tinted,
+                           (origin[0] + shift[0] + dx,
+                            origin[1] + shift[1] + dy),
+                           special_flags=pygame.BLEND_RGBA_MAX)
+            return layer
+
+        if shadow:
+            canvas.blit(stamp(shadow, outline_width, shadow_offset), (0, 0))
+        if outline:
+            canvas.blit(stamp(outline, outline_width), (0, 0))
+
+        # 主体：文字的 alpha 乘上竖向渐变
+        body = big.copy()
+        body.blit(vertical_gradient((width * s, height * s), top, bottom),
+                  (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        canvas.blit(body, origin)
+
+        if highlight:
+            # 上半部分再叠一层高光：光从上面打下来
+            gloss = edge_fade((width * s, height * s), highlight, 150,
+                              flip=True)
+            gloss.blit(big, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            canvas.blit(gloss, origin)
+
+        if alpha < 255:
+            canvas.fill((255, 255, 255, alpha),
+                        special_flags=pygame.BLEND_RGBA_MULT)
+        return pygame.transform.smoothscale(
+            canvas, (width + pad * 2, height + pad * 2))
+
+    return _cached(key, build)
+
+
+def draw_art_text(target, font, text, center, **kwargs):
+    """按中心画一段艺术字，返回它占的 rect。"""
+    image = art_text(font, text, **kwargs)
+    rect = image.get_rect(center=(int(center[0]), int(center[1])))
+    target.blit(image, rect)
+    return rect
