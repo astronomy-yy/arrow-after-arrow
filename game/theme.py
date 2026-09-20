@@ -72,6 +72,21 @@ class Palette:
     # 非对局界面的柔雾：若干团互相错开的低透明度色块，
     # 每项 (x 比例, y 比例, 半径, 颜色, alpha)。对局中不用 —— 雾会压住棋盘。
     fog: tuple
+    # ---- 菜单外壳（开始页 / 规则页 / 选关页）----
+    # 这几页共用一层「壁纸」：薄荷底渐变 + 一层同色调的箭头暗纹。
+    # 对局界面不走这套 —— 棋盘要的是安静的底子，不是纹理。
+    menu_top: tuple
+    menu_bottom: tuple
+    pattern: tuple         # 底纹颜色
+    pattern_alpha: int     # 底纹透明度（很低才像暗纹）
+    # ---- 开始页那只卡通箭（吉祥物）----
+    mascot_light: tuple    # 箭身渐变：上端
+    mascot_dark: tuple     # 箭身渐变：下端
+    mascot_line: tuple     # 外描边
+    mascot_gloss: tuple    # 高光块 / 星星
+    mascot_eye: tuple      # 眼白
+    mascot_pupil: tuple    # 瞳孔与眉毛
+    mascot_shadow: tuple   # 投影
     # ---- 艺术字（开始页标题）----
     art_top: tuple         # 字面渐变上端
     art_bottom: tuple      # 字面渐变下端
@@ -122,7 +137,7 @@ NIGHT = Palette(
     card_shadow=(16, 130, (10, 12, 24), 10),
     btn_top=(122, 172, 250),
     btn_bottom=(78, 124, 222),
-    btn_line=(148, 194, 255),
+    btn_line=(46, 92, 182),
     btn_text=(255, 255, 255),
     ghost_top=(236, 241, 253),
     ghost_bottom=(206, 216, 238),
@@ -135,6 +150,18 @@ NIGHT = Palette(
         (0.08, 0.70, 420, (72, 192, 208), 30),      # 左下：青
         (0.80, 0.93, 470, (88, 120, 226), 36),      # 右下：蓝
     ),
+    # 夜间不另起一套底色，只在原来的深蓝底上压一层浅色暗纹
+    menu_top=(68, 74, 110),
+    menu_bottom=(40, 44, 68),
+    pattern=(158, 196, 255),
+    pattern_alpha=26,
+    mascot_light=(96, 210, 250),
+    mascot_dark=(28, 108, 202),
+    mascot_line=(22, 26, 44),
+    mascot_gloss=(186, 248, 255),
+    mascot_eye=(255, 255, 255),
+    mascot_pupil=(30, 34, 52),
+    mascot_shadow=(8, 10, 22),
     # 卡通贴纸配方：奶白字面 + 近黑内边 + 浅色外边（三层对比，任何底色上都清晰）
     art_top=(255, 252, 240),
     art_bottom=(238, 212, 150),
@@ -184,9 +211,10 @@ DAY = Palette(
     card_line=(178, 200, 238),
     sheen=(255, 255, 255),
     card_shadow=(14, 90, (126, 140, 175), 8),
-    btn_top=(124, 176, 250),
-    btn_bottom=(84, 136, 226),
-    btn_line=(160, 202, 255),
+    # 参考图的蓝按钮：亮蓝填充 + **比填充更深的**描边，卡通感就来自这圈深边
+    btn_top=(78, 158, 232),
+    btn_bottom=(56, 134, 214),
+    btn_line=(42, 98, 182),
     btn_text=(255, 255, 255),
     ghost_top=(255, 255, 255),
     ghost_bottom=(240, 245, 254),
@@ -199,6 +227,18 @@ DAY = Palette(
         (0.08, 0.70, 430, (148, 222, 226), 22),     # 左下：淡青
         (0.80, 0.93, 470, (170, 198, 248), 26),     # 右下：淡蓝
     ),
+    # 日间菜单换成薄荷底（参考图那套清爽的浅青绿），配一层同色暗纹
+    menu_top=(208, 241, 239),
+    menu_bottom=(173, 220, 228),
+    pattern=(118, 184, 196),
+    pattern_alpha=62,
+    mascot_light=(92, 208, 249),
+    mascot_dark=(30, 112, 206),
+    mascot_line=(48, 44, 56),
+    mascot_gloss=(176, 250, 255),
+    mascot_eye=(255, 255, 255),
+    mascot_pupil=(40, 40, 52),
+    mascot_shadow=(104, 152, 172),
     # 和夜间同一套卡通贴纸配色；外圈换成奶黄，浅底上才看得出这一圈边界
     art_top=(255, 253, 244),
     art_bottom=(246, 222, 162),

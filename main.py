@@ -114,9 +114,16 @@ RULES_KEY_COL_W = 286           # 按键功能表的列宽（左列起点 → �
 RULES_KEYS_PAD_TOP = 70         # 按键功能表：面板顶边到第一行
 RULES_MODES_H = 196             # 三种玩法面板高度（内容是固定的三行）
 
-# 开始页四个入口的按钮中心 y（标题在 248、副标题在 322）
-START_BUTTON_Y = (470, 566, 662, 758)
-START_STATS_RECT = (320 - 214, 846, 428, 196)
+# 开始页的纵向节奏：标题 → 副标题 → 吉祥物 → 四个入口 → 进度卡 → 底部提示。
+# 吉祥物插进来之后按钮整体下移过一次，这些数字是一组，改一个就要往下看一遍。
+START_TITLE_Y = 168             # 拼装标题的中心 y
+START_SUBTITLE_Y = 246          # 英文副标题的中心 y
+# 吉祥物给出的 ``width`` 是**旋转前**的箭身宽，倾斜之后包围盒会膨胀约 28%，
+# 排位置要按画出来的尺寸算，不能按这个数字算。
+START_MASCOT_W = 285
+START_MASCOT_Y = 386            # 吉祥物中心 y
+START_BUTTON_Y = (552, 642, 732, 822)
+START_STATS_RECT = (320 - 214, 880, 428, 176)
 
 
 def desktop_size():
@@ -297,16 +304,16 @@ class Game:
 
         # 开始页的四个入口
         rules_y, basic_y, letter_y, random_y = START_BUTTON_Y
-        self.rules_button = Button((cx, rules_y), (340, 84), "规则介绍",
+        self.rules_button = Button((cx, rules_y), (340, 80), "规则介绍",
                                    self.open_rules, self.font_big,
                                    kind="ghost", icon=icons.book)
-        self.basic_button = Button((cx, basic_y), (340, 84), "基础玩法",
+        self.basic_button = Button((cx, basic_y), (340, 80), "基础玩法",
                                    self.open_basic_select, self.font_big,
                                    icon=icons.play)
-        self.letter_button = Button((cx, letter_y), (340, 84), "字母玩法",
+        self.letter_button = Button((cx, letter_y), (340, 80), "字母玩法",
                                     self.open_letter_select, self.font_big,
                                     icon=icons.letter_a)
-        self.random_button = Button((cx, random_y), (340, 84), "随机关卡",
+        self.random_button = Button((cx, random_y), (340, 80), "随机关卡",
                                     self.play_random, self.font_big,
                                     kind="ghost", icon=icons.dice)
         self.start_buttons = (self.rules_button, self.basic_button,
@@ -1235,6 +1242,17 @@ class Game:
         棋盘的可读性，盘面本身已经是整屏的彩色线段了。
         """
         pal = theme.get()
+        if self.state == GameState.START:
+            # 开始页换成「一块浅底 + 一层几乎看不见的同色暗纹」：暗纹用的是
+            # 游戏自己那支胖箭（不是照抄参考图的图案），平铺成壁纸的底子。
+            # 整屏预合成成一张贴图，每帧仍只是一次 blit。
+            paint.blit_pattern(self.canvas, (WINDOW_WIDTH, WINDOW_HEIGHT),
+                               pal.menu_top, pal.menu_bottom, pal.pattern,
+                               pal.pattern_alpha)
+            paint.blit_fog(self.canvas, (WINDOW_WIDTH, WINDOW_HEIGHT), pal.fog)
+            paint.blit_glow(self.canvas, (WINDOW_WIDTH // 2, START_MASCOT_Y),
+                            330, pal.glow, 66, 2.1)
+            return
         self.canvas.blit(paint.vertical_gradient(
             (WINDOW_WIDTH, WINDOW_HEIGHT), pal.bg_top, pal.bg_bottom), (0, 0))
         if self.state in (GameState.PLAYING, GameState.LEVEL_CLEAR,
@@ -1294,11 +1312,13 @@ class Game:
         cx = WINDOW_WIDTH // 2
 
         # 标题后面再压一团柔光：艺术字从背景里「亮」出来
-        paint.blit_glow(self.canvas, (cx, 228), 360, pal.glow, 78, 2.0)
-        self._draw_start_title((cx, 228))
+        paint.blit_glow(self.canvas, (cx, START_TITLE_Y), 360, pal.glow, 78,
+                        2.0)
+        self._draw_start_title((cx, START_TITLE_Y))
         paint.text_shadow(self.canvas, self.font_normal, "ARROW AFTER ARROW",
-                          pal.text_dim, center=(cx, 334), shadow=(4, 8, 20),
-                          alpha=90, offset=(0, 1))
+                          pal.text_dim, center=(cx, START_SUBTITLE_Y),
+                          shadow=(4, 8, 20), alpha=90, offset=(0, 1))
+        self._draw_start_mascot()
 
         for button in self.start_buttons:
             button.draw(self.canvas)
@@ -1309,6 +1329,24 @@ class Game:
                         self.font_small, pal.text_dim, center=(cx, 1082))
         self._draw_text("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单",
                         self.font_small, pal.text_dim, center=(cx, 1112))
+
+    def _draw_start_mascot(self):
+        """标题下方那只卡通箭（参考图里的吉祥物）。
+
+        它本质上是**游戏自己那支箭长了张脸**：箭身渐变 + 深色描边 + 贴边暗面 +
+        高光 + 两只眼睛，最后整体倾斜一点，看着像正要飞出去。画法是纯几何拼的
+        （``paint.arrow_mascot``），不依赖任何图片资源，切主题会自动换配色。
+        """
+        pal = theme.get()
+        image = paint.arrow_mascot(
+            START_MASCOT_W, pal.mascot_light, pal.mascot_dark,
+            pal.mascot_line, pal.mascot_gloss, eye=pal.mascot_eye,
+            pupil=pal.mascot_pupil, shadow=pal.mascot_shadow,
+            shadow_alpha=72, shadow_offset=(4, 10), tilt=-10,
+            outline_width=6)
+        rect = image.get_rect(center=(WINDOW_WIDTH // 2, START_MASCOT_Y))
+        self.canvas.blit(image, rect)
+        return rect
 
     def _start_title_pieces(self, pal):
         """标题「一箭又一箭」拆成五片：两根横条 + 三个字。

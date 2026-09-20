@@ -23,6 +23,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame                                     # noqa: E402
 import pytest                                     # noqa: E402
 
+import main                                       # noqa: E402
 from game import paint, theme                     # noqa: E402
 from game.states import GameState                 # noqa: E402
 from game.ui import Button, MenuPanel             # noqa: E402
@@ -347,12 +348,22 @@ def test_both_themes_define_every_new_field():
                       "board_top", "board_bottom", "board_line", "card_top",
                       "card_bottom", "card_line", "sheen", "btn_top",
                       "btn_bottom", "btn_line", "btn_text", "ghost_top",
-                      "ghost_bottom", "ghost_line", "ghost_text", "accent"):
+                      "ghost_bottom", "ghost_line", "ghost_text", "accent",
+                      "menu_top", "menu_bottom", "pattern", "mascot_light",
+                      "mascot_dark", "mascot_line", "mascot_gloss",
+                      "mascot_eye", "mascot_pupil", "mascot_shadow"):
             color = getattr(pal, field)
             assert len(color) == 3, (name, field, color)
             assert all(0 <= c <= 255 for c in color), (name, field, color)
         spread, alpha, color, dy = pal.card_shadow
         assert spread > 0 and 0 < alpha <= 255 and len(color) == 3 and dy >= 0
+        # 开始页底纹的不透明度：太浓会盖住标题，太淡就看不见纹理
+        assert 0 < pal.pattern_alpha < 160, (name, pal.pattern_alpha)
+        # 主按钮的描边**比填充更深**：卡通感就来自这一圈深边
+        assert max(pal.btn_line) < max(pal.btn_top), name
+        # 吉祥物：亮面比暗面亮、瞳孔比眼白深
+        assert sum(pal.mascot_light) > sum(pal.mascot_dark) + 120, name
+        assert sum(pal.mascot_pupil) < sum(pal.mascot_eye) - 200, name
         # 柔雾：(x 比例, y 比例, 半径, 颜色, alpha)，位置要在画面内
         assert len(pal.fog) >= 3, (name, pal.fog)
         for fx, fy, radius, color, alpha in pal.fog:
@@ -369,7 +380,9 @@ def test_the_two_themes_really_differ():
     assert night.bg_top != day.bg_top
     assert night.bg_bottom != day.bg_bottom
     assert sum(night.bg_top) < sum(day.bg_top)          # 夜间更暗
-    assert sum(night.btn_bottom) < sum(day.btn_bottom)
+    assert night.menu_top != day.menu_top
+    # 夜间底子更暗，主按钮反而要**更亮**，否则整块糊进背景里
+    assert sum(night.btn_bottom) > sum(day.btn_bottom)
     theme.set_theme("night")
 
 
@@ -459,9 +472,72 @@ def test_start_screen_layout_keeps_everything_apart(game):
             # 上下相邻，且留得出间距
             assert button.rect.top >= buttons[index - 1].rect.bottom + 8, \
                 (buttons[index - 1].rect, button.rect)
-    stats = pygame.Rect(320 - 214, 846, 428, 196)
+    stats = pygame.Rect(*main.START_STATS_RECT)
     assert buttons[-1].rect.bottom <= stats.top, (buttons[-1].rect, stats)
     assert stats.bottom <= 1140
+
+    # 吉祥物夹在副标题与第一个按钮之间，谁也不压谁
+    mascot = game._draw_start_mascot()
+    subtitle_bottom = main.START_SUBTITLE_Y + \
+        game.font_normal.size("ARROW AFTER ARROW")[1] // 2
+    assert mascot.top >= subtitle_bottom, (mascot, subtitle_bottom)
+    assert mascot.bottom <= buttons[0].rect.top, (mascot, buttons[0].rect)
+    assert mascot.left > 0 and mascot.right < game.canvas.get_width(), mascot
+
+
+def test_start_mascot_is_a_fat_arrow_with_a_face(game):
+    """吉祥物：蓝色胖箭 + 深色描边 + 一张脸，而且**箭尾不能是黑的**。
+
+    最后那条是踩过的坑：渐变原先只铺在「箭身框」内，箭尾的圆头伸到框外，
+    那一块被乘成全透明、露出底下深色描边 —— 看着像尾巴被烧掉一块。
+    这里直接量「最左侧那一列往右 16 px」是不是蓝色箭身。
+    """
+    theme.set_theme("night")
+    pal = theme.get()
+    image = paint.arrow_mascot(
+        285, pal.mascot_light, pal.mascot_dark, pal.mascot_line,
+        pal.mascot_gloss, eye=pal.mascot_eye, pupil=pal.mascot_pupil,
+        shadow=pal.mascot_shadow, shadow_alpha=72, shadow_offset=(4, 10),
+        tilt=-10, outline_width=6)
+    assert image.get_width() > 200 and image.get_height() > 100
+
+    mid = image.get_height() // 2
+    left = min(x for x in range(image.get_width())
+               if image.get_at((x, mid))[3] > 200)
+    fill = image.get_at((left + 16, mid))[:3]
+    assert fill[2] > 120 and fill[2] > fill[0] + 40, fill      # 蓝色箭身
+
+    opaque = [(x, y) for y in range(image.get_height())
+              for x in range(image.get_width())
+              if image.get_at((x, y))[3] > 200]
+    assert len(opaque) > 4000, len(opaque)
+
+    def has(predicate):
+        return any(predicate(image.get_at(pos)) for pos in opaque)
+
+    assert has(lambda c: max(c[:3]) < 70), "缺深色描边"
+    assert has(lambda c: min(c[:3]) > 235), "缺眼白"
+    # 描边得成圈：箭尾最左侧那几列里要有深色，而不是直接切到箭身
+    assert any(image.get_at((x, mid))[:3][0] < 90
+               for x in range(left, left + 8)), "箭尾左侧缺描边"
+
+
+def test_start_background_is_a_faint_arrow_wallpaper(game):
+    """开始页背景：一层很淡的同色箭形暗纹，深浅有起伏但不抢戏。"""
+    game.state = GameState.START
+    game._draw()
+    region = [(x, y) for x in range(0, 120, 2) for y in range(560, 760, 2)]
+    levels = sorted({sum(game.canvas.get_at((x, y))[:3])
+                     for x, y in region})
+    assert len(levels) > 3, "底纹不该是一块平涂"
+    assert 12 <= levels[-1] - levels[0] <= 110, (levels[0], levels[-1])
+
+    # 浅色主题的底子是薄荷青：绿分量高于红
+    theme.set_theme("day")
+    game._draw()
+    day = game.canvas.get_at((8, 700))[:3]
+    assert day[1] > day[0], day
+    theme.set_theme("night")
 
 
 def test_art_title_is_a_cartoon_sticker_banner(game):

@@ -756,3 +756,374 @@ def draw_art_banner(target, font, pieces, center, **kwargs):
     rect = image.get_rect(center=(int(center[0]), int(center[1])))
     target.blit(image, rect)
     return rect
+
+
+# --------------------------------------------------------------------------
+# 卡通箭（开始页吉祥物）与底纹
+# --------------------------------------------------------------------------
+
+MASCOT_SUPERSAMPLE = 2
+MASCOT_ASPECT = 0.62        # 箭身「高 / 宽」，标题下方那只箭的胖瘦
+ARROW_CORNER = 0.13         # 箭头三个角的圆角半径，按箭身高度取比例
+ARROW_SHAFT_H = 0.48        # 杆的粗细，同样按高度取比例（脸要画在杆上）
+MASCOT_EYE_X = (0.16, 0.33)     # 两只眼睛中心在箭身宽上的相对位置
+MASCOT_EYE_Y = 0.50             # 眼睛中心在箭身高度上的相对位置
+MASCOT_SMILE_X = 0.245          # 笑（一段圆弧）的中心
+MASCOT_SMILE_Y = 0.78
+
+
+def _tinted(mask, color, alpha=255):
+    """把一张白色遮罩染成某个颜色（顺带整体降透明度）。"""
+    layer = mask.copy()
+    layer.fill((*rgb(color), max(0, min(255, int(alpha)))),
+               special_flags=pygame.BLEND_RGBA_MULT)
+    return layer
+
+
+def _capsule(surface, color, p0, p1, width):
+    """粗线段 + 两端补圆 = 圆头胶囊。
+
+    pygame 的 ``line`` 是平头（butt cap），两端各补一个圆才圆润；圆头横杠、
+    眉毛这类「一笔」都用它画。
+    """
+    width = max(1, int(width))
+    pygame.draw.line(surface, color, p0, p1, width)
+    radius = max(1, width // 2)
+    for point in (p0, p1):
+        pygame.draw.circle(surface, color, (int(point[0]), int(point[1])),
+                           radius)
+
+
+def _round_polygon(surface, color, points, radius, grow=0.0):
+    """圆角多边形。
+
+    **不能**只在每个顶点画一个圆 —— 圆会鼓到边的外侧去，一个锐角三角形画出来
+    像一根骨头。这里按正规做法：每个顶点沿**角平分线**内缩 d = r / tan(θ/2)
+    得到两个切点，圆心落在距两边都是 r 的地方，先填「切点围成的多边形」、
+    再在三个角补圆。这样圆角恰好和两条边相切，一点都不外凸。
+
+    ``grow`` 把多边形**整体往外胖一圈**（描边用）：每个顶点沿外向角平分线挪
+    ``grow / sin(θ/2)``，圆角半径同步加 ``grow`` —— 于是尖角会按比例往外伸长，
+    而不是简单缩放。
+    """
+    points = [(float(p[0]), float(p[1])) for p in points]
+    count = len(points)
+    if count < 3:
+        return
+    if grow:
+        # 先算出「往外挪」之后的顶点：外向角平分线 = -(两条边向内的单位向量之和)
+        expanded = []
+        for index in range(count):
+            prev = points[(index - 1) % count]
+            cur = points[index]
+            nxt = points[(index + 1) % count]
+            u = _unit(prev[0] - cur[0], prev[1] - cur[1])
+            v = _unit(nxt[0] - cur[0], nxt[1] - cur[1])
+            bisector = _unit(u[0] + v[0], u[1] + v[1])
+            sin_half = max(0.25, math.hypot(bisector[0], bisector[1]) * 0.5)
+            reach = grow / sin_half
+            expanded.append((cur[0] - bisector[0] * reach,
+                             cur[1] - bisector[1] * reach))
+        points = expanded
+        radius += grow
+
+    radius = max(0.0, float(radius))
+    if radius <= 0.5:
+        pygame.draw.polygon(surface, color, points)
+        return
+    centres, tangents = [], []
+    for index in range(count):
+        prev = points[(index - 1) % count]
+        cur = points[index]
+        nxt = points[(index + 1) % count]
+        u = _unit(prev[0] - cur[0], prev[1] - cur[1])
+        v = _unit(nxt[0] - cur[0], nxt[1] - cur[1])
+        cos_angle = max(-1.0, min(1.0, u[0] * v[0] + u[1] * v[1]))
+        angle = math.acos(cos_angle)
+        if angle < 0.05:
+            centres.append(None)
+            tangents.append((cur, cur))
+            continue
+        half = angle * 0.5
+        reach = min(radius / math.tan(half),
+                    math.hypot(prev[0] - cur[0], prev[1] - cur[1]) * 0.5,
+                    math.hypot(nxt[0] - cur[0], nxt[1] - cur[1]) * 0.5)
+        # 圆心在两条边的角平分线上，距顶点 radius / sin(half)
+        bisector = _unit(u[0] + v[0], u[1] + v[1])
+        centres.append((cur[0] + bisector[0] * radius / math.sin(half),
+                        cur[1] + bisector[1] * radius / math.sin(half)))
+        tangents.append(((cur[0] + u[0] * reach, cur[1] + u[1] * reach),
+                         (cur[0] + v[0] * reach, cur[1] + v[1] * reach)))
+
+    # 切点按「绕行顺序」连成内多边形：每个顶点贡献两个切点（先到边、后出边），
+    # 相邻顶点的切点落在同一条边的那一段正是直线段。顺序错了会连成蝴蝶结。
+    outline = [point for pair in tangents for point in pair]
+    pygame.draw.polygon(surface, color, outline)
+    for index, centre in enumerate(centres):
+        if centre is None:
+            continue
+        pygame.draw.circle(surface, color, (int(round(centre[0])),
+                                            int(round(centre[1]))),
+                           int(round(radius)))
+
+
+def _unit(dx, dy):
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return (0.0, 0.0)
+    return (dx / length, dy / length)
+
+
+def _sparkle(surface, center, radius, color):
+    """四角星（卡通高光点），``radius`` 是外圈半径。"""
+    cx, cy = float(center[0]), float(center[1])
+    radius = max(1.0, float(radius))
+    thin = radius * 0.28
+    points = []
+    for index in range(8):
+        angle = math.pi / 4 * index - math.pi / 2
+        reach = radius if index % 2 == 0 else thin
+        points.append((cx + math.cos(angle) * reach,
+                       cy + math.sin(angle) * reach))
+    pygame.draw.polygon(surface, color, points)
+
+
+def _arrow_shape(canvas_size, box, grow=0.0):
+    """一支朝右的胖箭剪影：白色实心，其余透明。
+
+    形状 = 一根圆头短杆 + 一个大圆角三角头。``box`` 是箭身本体在画布里的
+    位置与尺寸（``(x, y, w, h)``）；``grow`` 让**每个组成元素各自往外胖一圈**
+    （杆变粗、三角的边也加粗、三个角的半径一起变大）。
+
+    这一步是「描边」能做得又准又快的关键：想描边就把同一支箭按
+    ``grow=描边宽`` 再画一遍填深色，不必对剪影做逐点膨胀 —— 后者在
+    粗描边下动辄几千次 blit，这里始终只有五六次绘图调用。
+    """
+    width, height = max(2, int(canvas_size[0])), max(2, int(canvas_size[1]))
+    mask = pygame.Surface((width, height), pygame.SRCALPHA)
+    mask.fill((0, 0, 0, 0))
+    white = (255, 255, 255, 255)
+    x, y, box_w, box_h = box
+    grow = max(0.0, float(grow))
+
+    # 杆要**够粗**：脸就画在杆上，杆细了五官就没地方放。0.60 的高度是按
+    # 「两只眼睛 + 眉毛 + 一道笑」塞进去反推的，不是随手取的。
+    shaft_h = box_h * ARROW_SHAFT_H + grow * 2
+    shaft_y = y + box_h * 0.5
+    _capsule(mask, white, (x + box_w * 0.03 - grow * 0.5, shaft_y),
+             (x + box_w * 0.45 + grow * 0.5, shaft_y), shaft_h)
+
+    head = ((x + box_w * 0.41, y + box_h * 0.02),
+            (x + box_w * 0.99, y + box_h * 0.5),
+            (x + box_w * 0.41, y + box_h * 0.98))
+    _round_polygon(mask, white, head, max(2, int(box_h * ARROW_CORNER)),
+                   grow)
+    return mask
+
+
+def _mascot_eye_size(box_w, box_h):
+    """一只眼睛的尺寸（宽、高）。"""
+    return max(4, int(round(box_w * 0.142))), max(6, int(round(box_h * 0.29)))
+
+
+def _mascot_face(canvas_size, box, eye, pupil):
+    """吉祥物的五官，单独画在一层上。
+
+    五官**必须单独成层**：画好之后拿箭身剪影做一次 ``BLEND_RGBA_MULT`` 把
+    多出来的部分抹掉（剪影是纯白 + 全不透明，乘上去只影响 alpha）。否则眼睛
+    一歪就浮在箭身外面，而且这种「溢出」在斜着看的时候特别明显。
+    """
+    layer = pygame.Surface(canvas_size, pygame.SRCALPHA)
+    layer.fill((0, 0, 0, 0))
+    x, y, box_w, box_h = box
+    eye_w, eye_h = _mascot_eye_size(box_w, box_h)
+    for index, fx in enumerate(MASCOT_EYE_X):
+        rect = pygame.Rect(0, 0, eye_w, eye_h)
+        rect.center = (int(x + box_w * fx), int(y + box_h * MASCOT_EYE_Y))
+        pygame.draw.ellipse(layer, eye, rect)
+        radius = max(2, int(round(eye_w * 0.40)))
+        centre = (rect.centerx + rect.width * 0.08,
+                  rect.centery + rect.height * 0.06)
+        pygame.draw.circle(layer, pupil, (int(centre[0]), int(centre[1])),
+                           radius)
+        pygame.draw.circle(
+            layer, eye,
+            (int(centre[0] - radius * 0.34), int(centre[1] - radius * 0.42)),
+            max(1, int(radius * 0.32)))
+        # 眉毛：挂在眼睛正上方，外端略高一点，才有「精神」
+        brow = max(2, int(box_h * 0.050))
+        _capsule(layer, pupil,
+                 (rect.centerx - eye_w * 0.44, rect.top - box_h * 0.055),
+                 (rect.centerx + eye_w * 0.48, rect.top - box_h * 0.100), brow)
+    # 笑：一段圆弧，缺的那一块在下方，正好构成一个向下弯的嘴角
+    smile = pygame.Rect(0, 0, int(box_w * 0.21), int(box_h * 0.17))
+    smile.center = (int(x + box_w * MASCOT_SMILE_X),
+                    int(y + box_h * MASCOT_SMILE_Y))
+    pygame.draw.arc(layer, pupil, smile, math.pi * 1.10, math.pi * 1.90,
+                    max(2, int(box_h * 0.045)))
+    return layer
+
+
+def arrow_mascot(width, light, dark, outline, gloss, eye=(255, 255, 255),
+                 pupil=(40, 44, 62), tilt=-10, outline_width=6,
+                 shade=None, shadow=(28, 40, 72), shadow_alpha=64,
+                 shadow_offset=(3, 8)):
+    """开始页标题下方那只卡通箭：胖箭 + 一张脸。
+
+    图层顺序（全部在超采样空间里画，最后旋转 + 缩回）：
+
+    1. **投影**：三四圈逐渐收窄、逐渐加深的剪影，错开一点贴上去，模拟模糊；
+    2. **外描边**：``grow=描边宽`` 的剪影填深色；
+    3. **箭身**：剪影 × 竖向渐变；
+    4. **内圈暗面**：剪影 **减去**「往左上挪几像素的剪影」（``BLEND_RGBA_SUB``），
+       得到贴着描边的右下那一圈，填暗色压上去 —— 参考图里那股立体感就来自
+       这一圈，比再做一套渐变便宜得多；
+    5. **高光块 + 四角星**：亮色块与剪影求交（``BLEND_RGBA_MIN``）；
+    6. **脸**：两只眼白 + 瞳孔 + 白点 + 两道眉毛（眉毛用胶囊，一起旋转）。
+
+    返回的 surface 已经裁到**墨迹边界**，直接 ``get_rect(center=...)`` 摆位。
+    注意 ``width`` 是「旋转前」的箭身宽，倾斜之后可见范围会略宽一点。
+    """
+    width = max(40, int(width))
+    light, dark, outline, gloss = (rgb(light), rgb(dark), rgb(outline),
+                                   rgb(gloss))
+    eye, pupil = rgb(eye), rgb(pupil)
+    shade = rgb(shade) if shade else mix(dark, outline, 0.45)
+    shadow = rgb(shadow)
+    outline_width = max(0, int(outline_width))
+    shadow_offset = (int(shadow_offset[0]), int(shadow_offset[1]))
+    tilt = float(tilt)
+    s = MASCOT_SUPERSAMPLE
+    key = ("mascot", s, width, light, dark, outline, gloss, eye, pupil, shade,
+           shadow, shadow_alpha, shadow_offset, round(tilt, 2), outline_width)
+
+    def build():
+        body_w = width * s
+        body_h = max(8, int(round(width * MASCOT_ASPECT)) * s)
+        # 留白要装得下：三个角的圆角、描边的外扩、投影的偏移
+        pad = int(body_h * 0.2) + outline_width * 2 * s \
+            + abs(shadow_offset[0]) * s + 10
+        canvas_size = (body_w + pad * 2, body_h + pad * 2)
+        box = (pad, pad, body_w, body_h)
+        grow = outline_width * s
+
+        canvas = pygame.Surface(canvas_size, pygame.SRCALPHA)
+        canvas.fill((0, 0, 0, 0))
+
+        for extra, alpha in ((4 * s, 0.42), (2 * s, 0.66), (0, 1.0)):
+            layer = _tinted(_arrow_shape(canvas_size, box, grow + extra),
+                            shadow, int(shadow_alpha * alpha))
+            canvas.blit(layer, (shadow_offset[0] * s, shadow_offset[1] * s))
+        canvas.blit(_tinted(_arrow_shape(canvas_size, box, grow), outline),
+                    (0, 0))
+
+        body = _arrow_shape(canvas_size, box, 0)
+        # 渐变要**铺满整张画布**，不能只铺在体框内：箭尾的圆头伸出体框左边，
+        # 那里被乘成全透明，底下的深色描边就露出来 —— 看着像尾巴被烧黑了一块。
+        # 体框内仍是原来的斜坡，框外向上取最亮、向下取最深。
+        gradient = pygame.Surface(canvas_size, pygame.SRCALPHA)
+        gradient.fill((*light, 255))
+        gradient.blit(vertical_gradient((body_w, body_h), light, dark),
+                      (0, box[1]))
+        below = box[1] + body_h
+        if below < canvas_size[1]:
+            gradient.fill((*dark, 255),
+                          pygame.Rect(0, below, canvas_size[0],
+                                      canvas_size[1] - below))
+        image = body.copy()
+        image.blit(gradient, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+        offset = max(2, int(grow * 0.5))
+        inner = _arrow_shape(
+            canvas_size, (box[0] - offset, box[1] - offset, body_w, body_h), 0)
+        rim = body.copy()
+        rim.blit(inner, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+        image.blit(_tinted(rim, shade, 150), (0, 0))
+
+        shine = pygame.Surface(canvas_size, pygame.SRCALPHA)
+        shine.fill((0, 0, 0, 0))
+        for (fx, fy, fw, fh, alpha) in ((0.10, 0.10, 0.26, 0.22, 200),
+                                        (0.60, 0.30, 0.22, 0.16, 130)):
+            rect = pygame.Rect(0, 0, int(body_w * fw), int(body_h * fh))
+            rect.center = (int(box[0] + body_w * fx + rect.width * 0.5),
+                           int(box[1] + body_h * fy + rect.height * 0.5))
+            pygame.draw.ellipse(shine, (255, 255, 255, alpha), rect)
+        shine.blit(body, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        shine.fill((*gloss, 255), special_flags=pygame.BLEND_RGBA_MULT)
+        image.blit(shine, (0, 0))
+        canvas.blit(image, (0, 0))
+
+        # ---- 脸：单独成层，用箭身剪影裁一刀，五官永远不会跑到箭身外面 ----
+        face = _mascot_face(canvas_size, box, eye, pupil)
+        face.blit(body, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        canvas.blit(face, (0, 0))
+
+        # 高光星点浮在箭头附近（不参与剪影裁剪），参考图里就是这种「闪光」点缀
+        for (fx, fy, size, alpha) in ((0.74, -0.03, 0.085, 220),
+                                      (0.97, 0.22, 0.065, 190)):
+            _sparkle(canvas, (box[0] + body_w * fx, box[1] + body_h * fy),
+                     body_h * size, (255, 255, 255, alpha))
+
+        rotated = pygame.transform.rotate(canvas, tilt)
+        small = pygame.transform.smoothscale(
+            rotated, (max(1, rotated.get_width() // s),
+                      max(1, rotated.get_height() // s)))
+        ink = small.get_bounding_rect()
+        if ink.width < 1 or ink.height < 1:
+            return small
+        return small.subsurface(ink).copy()
+
+    return _cached(key, build)
+
+
+def pattern_layer(size, top, bottom, ink, ink_alpha=70, step=88, arrow=54,
+                  tilt=0.0):
+    """底纹：整屏平铺的小箭头，同色调、极低对比。
+
+    参考图的背景是「一块浅浅的底色 + 一层几乎看不见的同色暗纹」，单靠渐变
+    出不来这种「有纹理但不抢戏」的底子。这里用游戏自己的那支胖箭当图案
+    （不是照抄参考图的圆角方块）：隔行错开半格、上下交替，像铺了一层壁纸。
+
+    结果整屏预合成成**一张不透明贴图**（底色渐变也在里面），每帧只需一次
+    ``blit``；`step` 是格子边长，`arrow` 是单支箭的宽。
+    """
+    width, height = max(1, int(size[0])), max(1, int(size[1]))
+    step, arrow = max(12, int(step)), max(6, int(arrow))
+    ink_alpha = max(0, min(255, int(ink_alpha)))
+    key = ("pattern", width, height, rgb(top), rgb(bottom), rgb(ink),
+           ink_alpha, step, arrow, round(float(tilt), 2))
+
+    def build():
+        layer = pygame.Surface((width, height))
+        layer.blit(vertical_gradient((width, height), top, bottom), (0, 0))
+        if ink_alpha <= 0:
+            return layer
+
+        s = 2
+        sprite_h = max(4, int(round(arrow * MASCOT_ASPECT)))
+        pad = int(sprite_h * ARROW_CORNER) + 2
+        sprite = _arrow_shape((arrow * s + pad * 2, sprite_h * s + pad * 2),
+                              (pad, pad, arrow * s, sprite_h * s))
+        sprite = pygame.transform.smoothscale(
+            sprite, (arrow + pad * 2, sprite_h + pad * 2))
+        sprite = _tinted(sprite, ink, ink_alpha)
+        flipped = pygame.transform.flip(sprite, False, True)
+
+        rows = height // step + 2
+        cols = width // step + 2
+        for row in range(-1, rows):
+            for col in range(-1, cols):
+                x = col * step + (step // 2 if row % 2 else 0) - sprite.get_width() // 2
+                y = row * step - sprite.get_height() // 2
+                image = sprite if (row + col) % 2 == 0 else flipped
+                layer.blit(image, (x, y))
+        return layer
+
+    return _cached(key, build)
+
+
+def blit_pattern(surface, size, top, bottom, ink, ink_alpha=70, step=88,
+                 arrow=54, tilt=0.0):
+    """铺一整层预合成好的底纹（含底色渐变）。"""
+    surface.blit(pattern_layer(size, top, bottom, ink, ink_alpha, step, arrow,
+                               tilt), (0, 0))
