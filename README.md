@@ -64,6 +64,10 @@ python main.py
   15 px 上限对齐）；箭头是一枚**飞镖**而非等腰三角（两枚倒钩前掠、后缘向内兜住线身），
   整支箭外面再描一圈比线身压暗一档的**外描边**（色相不变，深色底压狠、浅色底压轻），
   线与线挨在一起时不会糊成一片。详见 `docs/design.md` 7.2。
+- **界面观感**：整页背景是竖向渐变 + 棋盘后方一团柔光；棋盘垫在一块圆角面板上；
+  顶栏底栏是半透明「玻璃」加一道渐隐阴影；按钮、卡片、菜单项、滑杆都是渐变填充 +
+  细描边 + 投影，悬停提亮描边、按下整体下沉 2 像素。所有贴图都按参数缓存，
+  一帧只是几次 `blit`。详见 `docs/design.md` 第 8 节。
 
 ## 项目结构
 
@@ -73,6 +77,7 @@ arrow-after-arrow/
 ├── game/
 │   ├── settings.py            # 全局配置：窗口尺寸、布局、线宽、两套箭头调色板
 │   ├── theme.py               # 日间 / 夜间两套界面配色 + 箭头配色解析
+│   ├── paint.py               # 柔和绘制：渐变、柔光、投影、卡片、文字阴影（全缓存）
 │   ├── arrow.py               # 方向枚举、线段宽度、圆角折线与箭头绘制
 │   ├── shapes.py              # 关卡造型遮罩：矩/圆/菱/心/三角/十字/沙漏/环
 │   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验 + 阻挡难度旋钮
@@ -88,11 +93,12 @@ arrow-after-arrow/
 │   └── states.py              # 游戏状态枚举
 ├── tools/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
-│   └── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
-├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 动效 / 线段渲染 / 端到端
+│   ├── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
+│   └── perf_bench.py          # 整帧耗时基准（各界面 × 日夜主题）
+├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 / 缩放拖动 / 动效 / 线段渲染 / 界面观感 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
-│   └── test-record.md         # T01–T11 测试记录
+│   └── test-record.md         # T01–T12 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -102,11 +108,12 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 150 个用例，无窗口运行
+python -m pytest -q                    # 227 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
 python tools/screenshot.py             # 重新导出 README 用的截图
+python tools/perf_bench.py             # 打印各界面 × 日夜主题的整帧耗时
 ```
 
 ## 游戏截图
@@ -126,3 +133,7 @@ python tools/screenshot.py             # 重新导出 README 用的截图
 | 飞行中的一帧（线正沿自身折线滑出，尾迹逐格点亮） | 放大后拖到一侧（可见区只剩棋盘的一部分） |
 |---|---|
 | ![飞出](assets/screenshots/playing_flying.png) | ![缩放拖动](assets/screenshots/playing_zoom_pan.png) |
+
+| 设置面板 | 日间主题的通关结算 |
+|---|---|
+| ![设置](assets/screenshots/settings.png) | ![日间结算](assets/screenshots/level_clear_day.png) |
