@@ -283,14 +283,43 @@ def test_tutorial_playthrough_runs_1_2_3_and_returns_to_its_select(game):
     assert game.state == GameState.START
 
 
-def test_tutorial_levels_have_plenty_of_arrows():
-    """入门关是拿来练手的，箭太少点两下就没了 —— 每关至少 8 支。"""
+def test_tutorial_levels_fill_over_half_the_board():
+    """入门关要「尽量铺满棋盘」—— 每关的箭盖住一半以上的格子。
+
+    原来三关铺开只有 3/4/5 支（占 7%），点两下就空了；现在每关都在 50% 以上。
+    顺带盯住另外两条内容要求：红心跟主线一样是 3 颗（原来写的 5，界面上就是
+    五颗心）、每支都还是单格箭、开局有箭被挡着（真的要求「先清挡路的」）。
+    """
     assert len(main.TUTORIAL_LEVELS) == 3
     for level in main.TUTORIAL_LEVELS:
-        assert len(level["arrows"]) >= 8, (level["id"], len(level["arrows"]))
-        # 全是单格箭，而且顺序解真的走得通
+        cells = sum(len(arrow["cells"]) for arrow in level["arrows"])
+        total = level["rows"] * level["cols"]
+        assert cells * 2 >= total, (level["id"], cells, total)
+        assert len(level["arrows"]) >= 24, (level["id"], len(level["arrows"]))
+        assert level["mistakes"] == 3, (level["id"], level["mistakes"])
         assert all(len(arrow["cells"]) == 1 for arrow in level["arrows"])
+
+        board = Board(level)
+        assert len(board.flyable_arrows()) < len(level["arrows"]), level["id"]
         assert generator.verify_solution(level) is True
+        assert len(level["solution"]) == len(level["arrows"])
+
+
+def test_tutorial_boards_are_dense_and_never_leave_a_deadlock():
+    """一路按求解器给的顺序点下去，整盘必须能清空（这是「有解」的完整证明）。
+
+    入门关是按「行/列成串」摆出来的，看上去密密麻麻 —— 这里用真正的棋盘
+    走一遍，防止以后加箭的时候不小心摆出一个互相封死的环。
+    """
+    for level in main.TUTORIAL_LEVELS:
+        board = Board(level)
+        order = solve(board)
+        assert order is not None, level["id"]
+        for arrow_id in order:
+            arrow = next(a for a in board.arrows if a.id == arrow_id)
+            assert board.can_fly_arrow(arrow), (level["id"], arrow_id)
+            board.remove_arrow(arrow)
+        assert board.remaining == 0, level["id"]
 
 
 def test_rules_button_opens_and_returns(game):

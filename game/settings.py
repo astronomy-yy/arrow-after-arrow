@@ -49,6 +49,13 @@ TITLE_CENTER_Y = 46
 HEART_CENTER_Y = 86
 CLOCK_CENTER_Y = 122
 
+# 倒计时同一行的左右两个信息位：左边「还剩几支箭」，右边「重新开始」。
+# 这一行左右都空着（设置齿轮 / 日夜拨杆在第 54 行），所以贴在倒计时两侧
+# 既显眼又不会跟别的控件挤在一起。
+ARROW_LEFT_CENTER = (WINDOW_WIDTH // 2 - 148, CLOCK_CENTER_Y)
+RESTART_CENTER = (WINDOW_WIDTH // 2 + 118, CLOCK_CENTER_Y)
+RESTART_SIZE = 44
+
 # ---- 线段 ----
 SEGMENT_WIDTH_RATIO = 0.30   # 线宽 / 格子边长（对着参考录屏量的：线宽约占格距 1/4）
 MIN_SEGMENT_WIDTH = 4

@@ -824,18 +824,26 @@ def test_rules_panels_stack_without_overlapping(game):
     """四块面板依次往下排、互不重叠，返回按钮落在最后一块下面。
 
     这条之前是**失败**的：`esc_y = 1318` 而画面只有 1140，底部提示与返回按钮
-    整个掉在画面外（玩家看到的就是「规则页底下被切掉」）。版式常量收紧之后
-    才过。四块面板里任何一块内容变长，这条会再响一次。
+    整个掉在画面外（玩家看到的就是「规则页底下被切掉」）。版式改成「按内容
+    累加 + 自己收紧」之后才过。四块面板里任何一块内容变长，这条会再响一次。
     """
     import main
     game.state = GameState.RULES
     layout = game._rules_layout()
-    how, keys, modes = layout["how"], layout["keys"], layout["modes"]
+    how, keys = layout["how"], layout["keys"]
+    modes, progress = layout["modes"], layout["progress"]
     assert how.bottom < keys.top < keys.bottom < modes.top
-    assert keys.top - how.bottom == main.RULES_GAP
+    assert modes.bottom < progress.top < progress.bottom
+    # 面板之间的间距是同一个值（这个值会因为自动收紧而比常量小一点）
+    gap = layout["gap"]
+    assert keys.top - how.bottom == gap
+    assert modes.top - keys.bottom == gap
+    assert progress.top - modes.bottom == gap
+    assert main.RULES_SQUEEZE[-1][2] <= gap <= main.RULES_GAP
     # 面板要留在画面内，按钮与底部提示也要
-    assert modes.bottom < layout["note_y"] < layout["home_y"] < layout["esc_y"]
-    assert layout["esc_y"] < main.WINDOW_HEIGHT
+    assert progress.bottom < layout["note_y"] < layout["home_y"] \
+        < layout["esc_y"]
+    assert layout["esc_y"] <= main.WINDOW_HEIGHT - main.RULES_BOTTOM_PAD
     # 按钮位置必须和版式一致（它是在 _build_widgets 里按版式摆的）
     assert game.rules_home_button.rect.centery == layout["home_y"]
 
@@ -845,6 +853,202 @@ def test_rules_layout_is_computed_once(game):
     game.state = GameState.RULES
     first = game._rules_layout()
     assert game._rules_layout() is first
+
+
+def _ink(font, text, rect):
+    """一段文字在这块画布上的**墨迹**矩形（不是字框）。
+
+    字框天生比字高一点，相邻两行的字框重叠 2~5 px 是正常的（墨迹并不碰），
+    只有墨迹重叠才是肉眼看得见的「字叠字」。
+    """
+    ink = font.render(text, True, (255, 255, 255)).get_bounding_rect()
+    return pygame.Rect(rect.left + ink.left, rect.top + ink.top,
+                       ink.width, ink.height)
+
+
+def _text_ink_boxes(game):
+    """画一遍当前的界面，收集每一段文字的墨迹矩形（含页面大标题）。
+
+    用「把 self._draw_text 换成一个会记账的壳」来抓所有文字，收尾就把实例
+    属性删掉，恢复成类上的方法。
+    """
+    import main
+    boxes = []
+    original = game._draw_text
+
+    def spy(text, font, color, center=None, topleft=None):
+        rect = original(text, font, color, center=center, topleft=topleft)
+        boxes.append((text, _ink(font, text, rect)))
+        return rect
+
+    game._draw_text = spy
+    try:
+        game._draw()
+    finally:
+        del game._draw_text
+
+    # 页面大标题走的是 paint.text_shadow，不是 _draw_text，得单独补进来
+    if game.state == GameState.RULES:
+        title = pygame.Rect(0, 0, *game.font_title.size("玩法规则"))
+        title.center = (main.WINDOW_WIDTH // 2, main.RULES_TITLE_Y)
+        boxes.append(("玩法规则", _ink(game.font_title, "玩法规则", title)))
+    return boxes
+
+
+def test_no_two_pieces_of_text_on_the_rules_page_overlap(game):
+    """规则页上任意两段文字的墨迹都不许叠在一起。
+
+    这是「文字排版错位」的根因：按键功能表第一行是按一个写死的偏移量画的，
+    实测正好压在「按键功能」这四个字上（重叠 13~15 px），屏幕上就是一团
+    「字叠字」。这种错位**不抛异常、也不让任何测试变红**，只能逐对量矩形。
+    """
+    game.state = GameState.RULES
+    boxes = _text_ink_boxes(game)
+    assert len(boxes) > 20, "规则页的文字没抓全，记账的壳没生效"
+
+    overlaps = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            inter = boxes[i][1].clip(boxes[j][1])
+            if inter.width >= 2 and inter.height >= 2:
+                overlaps.append((boxes[i][0], boxes[j][0], tuple(inter)))
+    assert not overlaps, overlaps
+
+
+def test_rules_panel_titles_leave_a_gap_above_the_content(game):
+    """四块面板的标题跟它下面第一行之间要真的留得出空档。
+
+    只保证「不叠」还不够 —— 标题贴着正文的下沿也算错位。这里量的是标题墨迹
+    的下沿与正文第一行墨迹的上沿之间的距离。
+    """
+    import main
+    game.state = GameState.RULES
+    layout = game._rules_layout()
+    boxes = dict(_text_ink_boxes(game))
+
+    pairs = (
+        ("怎么玩", layout["how_lines"][0]),
+        ("按键功能", main.KEY_HINTS[0][0][1]),
+        ("四种玩法", main.MODE_LINES[0][1]),
+        ("进度与设置", layout["progress_lines"][0]),
+    )
+    for title, first_line in pairs:
+        top = boxes[title].bottom
+        bottom = boxes[first_line].top
+        assert bottom - top >= 6, (title, first_line, top, bottom)
+
+
+def test_rules_page_squeezes_itself_when_the_copy_grows(game, monkeypatch):
+    """文案再加几句，版式自己收紧着也要把最后一行留在画面里。
+
+    四块面板的高度都是「按内容算」的，越算越长就一定会顶出窗口 —— 而顶出去
+    的部分不报错（只是画到画面外）。所以这条盯的是 ``RULES_SQUEEZE`` 那道兜底：
+    先量出「不收紧会超多少」，再让文案长长一点，看它还能不能自己缩回来。
+    """
+    import main
+    floors = {name: low for name, _start, low in main.RULES_SQUEEZE}
+    monkeypatch.setattr(
+        main, "HOW_TO_PLAY",
+        main.HOW_TO_PLAY + ("再补一句长的：这句话的作用只是把正文撑长，"
+                            "看看规则页会不会自己收紧到仍然塞得进窗口。",))
+    game.rules_layout = None                      # 版式是缓存的，得让它重算
+    layout = game._rules_layout()
+
+    assert layout["esc_y"] <= main.WINDOW_HEIGHT - main.RULES_BOTTOM_PAD
+    for name in ("line_h", "key_row_h", "modes_row_h"):
+        assert layout[name] >= floors[name], (name, layout[name])
+    # 收紧是有限度的：已经到底的旋钮不会再被拧下去
+    assert layout["line_h"] <= main.RULES_LINE_H
+
+
+def test_top_bar_reads_arrows_left_timer_restart_in_a_row(game):
+    """顶栏倒计时这一行：左边剩余箭数、中间计时器、右边重新开始，互不打架。
+
+    这一行原来只有计时器居中，左右各空一大块；补上两个信息位之后，最怕的是
+    跟红心 / 右上角三个图标 / 日夜拨杆叠在一起 —— 同样是不会有任何报错的
+    错位，只能靠量矩形。
+    """
+    import main
+    from game.settings import HEART_CENTER_Y, TOP_BAR_HEIGHT, WINDOW_WIDTH
+    game.start_game()
+    game._draw()
+    hud = game.hud
+
+    assert hud.arrows_rect.width > 0 and hud.clock_rect.width > 0
+    assert hud.arrows_rect.right <= hud.clock_rect.left     # 剩余箭数在计时器左边
+    assert hud.clock_rect.right <= hud.restart_button.rect.left   # 重开在右边
+
+    for rect in (hud.arrows_rect, hud.clock_rect,
+                 hud.restart_button.rect):
+        assert 0 <= rect.left and rect.right <= WINDOW_WIDTH, rect
+        assert 0 <= rect.top and rect.bottom <= TOP_BAR_HEIGHT, rect
+
+    hearts = pygame.Rect(0, 0, 3 * 30, 22)                  # 3 颗心，间距 30
+    hearts.center = (WINDOW_WIDTH // 2, HEART_CENTER_Y)
+    others = {
+        "红心": hearts,
+        "设置齿轮": hud.settings_button.rect,
+        "日夜拨杆": hud.theme_switch.rect,
+        "手柄": hud.skip_button.rect,
+        "省略号": hud.menu_button.rect,
+        "靶心": hud.select_button.rect,
+    }
+    for name, rect in others.items():
+        for mine in (hud.arrows_rect, hud.clock_rect,
+                     hud.restart_button.rect):
+            assert not mine.colliderect(rect), (name, tuple(mine), tuple(rect))
+
+
+def test_top_bar_icons_actually_paint_pixels():
+    """顶栏用的图标必须真的画出东西来。
+
+    ``pygame.draw.arc`` 在「半径只有十几像素、线宽又大于 1」时**一个像素都
+    不画**：按钮还在、还能点，只是看不见，而且不报错。所以这里数一遍像素 ——
+    新加的「重新开始」图标就踩过这个坑（换成逐点连圆弧才正常）。
+    """
+    from game import icons
+    for name in ("gear", "controller", "dots", "target", "restart",
+                 "arrow_right", "clock"):
+        surface = pygame.Surface((80, 80))
+        surface.fill(BG)
+        getattr(icons, name)(surface, (40, 40), 27, (255, 255, 255))
+        drawn = sum(1 for x in range(80) for y in range(80)
+                    if opaque(surface, x, y))
+        # 门槛定得很低（最小的 dots 是三个小圆点，36 个像素）—— 这条要抓的是
+        #「画了个寂寞」，不是约束图标的胖瘦
+        assert drawn >= 24, (name, drawn)
+
+
+def test_arrows_left_readout_follows_the_board(game):
+    """「剩余」那个数字跟着盘面走：飞走一支少一支。"""
+    import main
+    game.start_game()
+    before = main.HudInfo(game).arrows_left
+    assert before == game.board.total
+    game.board.remove_arrow(game.board.flyable_arrows()[0])
+    assert main.HudInfo(game).arrows_left == before - 1
+
+
+def test_restart_button_puts_the_level_back_to_the_start(game):
+    """顶栏那个「重新开始」真能重开：箭数、红心、倒计时一起回到开局。"""
+    from game.states import GameState as State
+    game.start_game()
+    total = game.board.total
+    game.board.remove_arrow(game.board.flyable_arrows()[0])
+    game.board.mistakes -= 1
+    game.time_left = 5.0
+
+    game.state = State.PLAYING
+    rect = game.hud.restart_button.rect
+    game.hud.restart_button.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                           {"pos": rect.center, "button": 1}))
+
+    assert game.state == State.PLAYING
+    assert game.board.remaining == total
+    assert game.board.mistakes == game.board.max_mistakes
+    assert game.time_left == float(game.current_level["time_limit"])
+    assert game.toast_text, "点了重新开始得给一句提示"
 
 
 def test_menus_get_fog_but_the_board_does_not(game):

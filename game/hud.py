@@ -1,7 +1,8 @@
 """顶部信息栏 + 底部工具条，照着参考图 / 录屏的版式复刻。
 
 顶栏从左到右：设置齿轮、日夜拨杆、关卡标题与金色关卡号、红心、
-时钟倒计时，右侧是手柄、省略号菜单、关卡选择靶心。
+时钟倒计时（左边「还剩几支箭」、右边「重新开始」），
+右侧是手柄、省略号菜单、关卡选择靶心。
 底栏从左到右：金币提示、缩放滑杆、辅助线开关。
 """
 
@@ -9,6 +10,7 @@ import pygame
 
 from game import icons, paint, theme
 from game.settings import (
+    ARROW_LEFT_CENTER,
     CLOCK_CENTER_Y,
     COIN_CENTER,
     COIN_RADIUS,
@@ -16,6 +18,8 @@ from game.settings import (
     GUIDE_LABEL_Y,
     HEART_CENTER_Y,
     HINT_LABEL_Y,
+    RESTART_CENTER,
+    RESTART_SIZE,
     SETTINGS_CENTER,
     SLIDER_RECT,
     THEME_SWITCH_CENTER,
@@ -35,6 +39,7 @@ HEART_GAP = 30
 HEART_SIZE = 22
 RIGHT_ICON_SIZE = 44
 LEFT_ICON_SIZE = 50
+ARROW_ICON_SIZE = 22        # 顶栏「还剩几支箭」的小箭头
 
 
 class Hud:
@@ -60,6 +65,10 @@ class Hud:
         self.select_button = IconButton(
             TOP_ICON_CENTERS[2], RIGHT_ICON_SIZE, icons.target,
             callbacks.get("select"), radius=12)
+        # 倒计时右边的「重新开始」：不用翻菜单就能重开本关
+        self.restart_button = IconButton(
+            RESTART_CENTER, RESTART_SIZE, icons.restart,
+            callbacks.get("restart"), radius=12)
 
         # 提示按钮的图标就是那枚金币，由 draw_bottom 单独画
         self.hint_button = _BottomButton(
@@ -79,6 +88,11 @@ class Hud:
             callbacks.get("zoom_in"), radius=10)
         self.zoom_slider = Slider(SLIDER_RECT, 0.0, callbacks.get("zoom"))
 
+        # 倒计时那一行的两个信息位：宽高随数字位数变，绘制时才定得下来，
+        # 先给两个空框占位（回归测试会拿它们跟别的控件对位置）。
+        self.arrows_rect = pygame.Rect(0, 0, 0, 0)
+        self.clock_rect = pygame.Rect(0, 0, 0, 0)
+
     # ---------------- 事件 ----------------
 
     def handle_event(self, event):
@@ -90,9 +104,9 @@ class Hud:
     def widgets(self):
         return [
             self.settings_button, self.theme_switch, self.skip_button,
-            self.menu_button, self.select_button, self.hint_button,
-            self.guide_button, self.zoom_out_button, self.zoom_in_button,
-            self.zoom_slider,
+            self.menu_button, self.select_button, self.restart_button,
+            self.hint_button, self.guide_button, self.zoom_out_button,
+            self.zoom_in_button, self.zoom_slider,
         ]
 
     # ---------------- 绘制 ----------------
@@ -150,13 +164,22 @@ class Hud:
                                   alpha=105, dy=3)
             icons.heart(surface, center, HEART_SIZE, color)
 
+        # 倒计时左边：还剩几支箭没飞
+        self._draw_arrows_left(surface, info, pal)
+
         # 时钟 + 倒计时
         clock_c = (WINDOW_WIDTH // 2 - 46, CLOCK_CENTER_Y)
+        time_text = _format_time(info.time_left)
+        self.clock_rect = pygame.Rect(
+            clock_c[0] - 10, CLOCK_CENTER_Y - 15,
+            10 + 42 + self.font_normal.size(time_text)[0] // 2 + 10, 30)
         icons.clock(surface, clock_c, 20, pal.text)
-        paint.text_shadow(surface, self.font_normal,
-                          _format_time(info.time_left), pal.text,
+        paint.text_shadow(surface, self.font_normal, time_text, pal.text,
                           center=(clock_c[0] + 16 + 26, CLOCK_CENTER_Y),
                           shadow=(4, 8, 20), alpha=100)
+
+        # 倒计时右边：重新开始（不用翻菜单就能重开本关）
+        self.restart_button.draw(surface)
 
         self.skip_button.draw(surface)
         self.menu_button.draw(surface)
@@ -167,6 +190,29 @@ class Hud:
             img.set_alpha(int(255 * info.toast_ratio))
             surface.blit(img, img.get_rect(
                 center=(WINDOW_WIDTH // 2, TOP_BAR_HEIGHT + 26)))
+
+    def _draw_arrows_left(self, surface, info, pal):
+        """倒计时左边：还剩几支箭没飞。
+
+        整组（小箭头 + 「剩余」+ 金色数字）按 ``ARROW_LEFT_CENTER`` 居中，
+        所以数字位数变化时不会把这一行顶歪。画完把整组的包围盒记在
+        ``self.arrows_rect`` 上，回归测试拿它跟计时器 / 别的控件对位置。
+        """
+        cy = ARROW_LEFT_CENTER[1]
+        label = self.font_small.render("剩余", True, pal.text_dim)
+        count = self.font_normal.render(str(info.arrows_left), True,
+                                        pal.text_gold)
+        gap = 8
+        total = (ARROW_ICON_SIZE + gap + label.get_width() + 4
+                 + count.get_width())
+        x = ARROW_LEFT_CENTER[0] - total // 2
+        self.arrows_rect = pygame.Rect(x, cy - 15, total, 30)
+        icons.arrow_right(surface, (x + ARROW_ICON_SIZE // 2, cy),
+                          ARROW_ICON_SIZE, pal.text_dim)
+        x += ARROW_ICON_SIZE + gap
+        surface.blit(label, label.get_rect(midleft=(x, cy)))
+        x += label.get_width() + 4
+        surface.blit(count, count.get_rect(midleft=(x, cy)))
 
     def draw_bottom(self, surface, info):
         pal = theme.get()

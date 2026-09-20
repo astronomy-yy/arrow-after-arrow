@@ -109,16 +109,48 @@ KEY_HINTS = (
     (("Esc", "打开菜单 / 返回上一级"), None),
 )
 
+# 规则页「四种玩法」那四行：图标 + 名字 + 一句话说明。
+# 提成常量是因为面板高度要按行数算（见 _build_rules_layout）。
+MODE_LINES = (
+    (icons.star, "入门玩法", "3 关单格箭，整盘铺满，从零练手"),
+    (icons.play, "基础玩法", "12 关，从小盘到大盘，难度一路递增"),
+    (icons.letter_a, "字母玩法", "26 个字母各一关，整盘铺成一个字母"),
+    (icons.dice, "随机关卡", "随机造型现场生成，每次都不一样"),
+)
+
 # 规则页的版式：每块面板的高度由内容决定，位置依次往下累加（见 _rules_layout）。
-RULES_TOP = 120                 # 第一块面板的顶边
+#
+# 每块面板的顶部都留一条「题头带」：标题只占这条带子，正文 / 表格第一行一律
+# 从带子下面开始。之前按键功能表的第一行是按一个写死的偏移量画的，正好搭在
+# 「按键功能」四个字上（实测重叠 13~15 px），看上去就是「字叠字」的错位 ——
+# 而这种错位不会抛任何异常，只能靠量矩形发现。现在正文起点跟着字体高度算，
+# 标题和正文再也不可能粘在一起。
+RULES_TITLE_Y = 78              # 页面大标题的中心 y
+RULES_TOP = 116                 # 第一块面板的顶边
+RULES_TITLE_PAD = 12            # 面板顶边 → 面板标题的字顶
+RULES_HEAD_GAP = 8              # 面板标题 → 正文 / 表格第一行
 RULES_MARGIN = 26               # 面板内的左右留白
 RULES_GAP = 8                   # 面板之间
-RULES_LINE_H = 28               # 「怎么玩」正文行高
-RULES_PARA_GAP = 6              # 「怎么玩」三句话之间的额外间距
+RULES_LINE_H = 28               # 正文行高（塞不下时 _rules_layout 会自动收紧）
+RULES_PARA_GAP = 6              # 正文段落之间的额外间距
 RULES_KEY_ROW_H = 38            # 按键功能表行距
+RULES_KEY_CAP_H = 32            # 按键胶囊高度（第一行胶囊的顶边落在题头带下沿）
 RULES_KEY_COL_W = 286           # 按键功能表的列宽（左列起点 → 右列起点）
-RULES_KEYS_PAD_TOP = 56         # 按键功能表：面板顶边到第一行
-RULES_MODES_H = 200             # 四种玩法面板高度（内容固定四行：入门/基础/字母/随机）
+RULES_MODES_ROW_H = 36          # 四种玩法表行距
+RULES_BOTTOM_PAD = 18           # 最后一行文字距窗口底边的安全余量
+# 整页塞不下时逐档收紧的旋钮：(名字, 初值, 下限)。每一步七个旋钮各缩 1 px，
+# 缩到「最后一行离底边还有 RULES_BOTTOM_PAD」就停；到底的旋钮不再往下拧。
+# 下限留得比较宽（正文行高能收到 24，字体本身才 23 px 高），是为了让
+# 「往文案里再加两句」不至于把底部那行挤到画面外面去。
+RULES_SQUEEZE = (
+    ("line_h", RULES_LINE_H, 24),
+    ("para_gap", RULES_PARA_GAP, 3),
+    ("key_row_h", RULES_KEY_ROW_H, 34),
+    ("modes_row_h", RULES_MODES_ROW_H, 32),
+    ("title_pad", RULES_TITLE_PAD, 6),
+    ("head_gap", RULES_HEAD_GAP, 4),
+    ("gap", RULES_GAP, 5),
+)
 
 # 开始页的纵向节奏：标题 → 副标题 → 吉祥物 → 五个入口 → 底部提示。
 # 吉祥物插进来之后按钮整体下移过一次，这些数字是一组，改一个就要往下看一遍。
@@ -181,6 +213,7 @@ class HudInfo:
         self.hearts = game.board.mistakes
         self.max_hearts = game.board.max_mistakes
         self.time_left = game.time_left
+        self.arrows_left = game.board.remaining
         self.coins = game.coins
         self.guide = game.guide_on
         self.toast = game.toast_text
@@ -302,6 +335,8 @@ class Game:
                 "menu": self.open_menu,
                 # 顶栏靶心是「返回」：回进这一局之前的那一屏，不是固定的某一页
                 "select": self.leave_level,
+                # 顶栏倒计时右边的「重新开始」，跟菜单里那条完全同路
+                "restart": self.restart_level,
                 "hint": self.use_hint,
                 "guide": self.toggle_guide,
                 "zoom": self.on_zoom_slider,
@@ -615,6 +650,11 @@ class Game:
             self.state = GameState.ALL_CLEAR
 
     def restart_level(self):
+        """重开本关：盘面、红心、倒计时、撤销栈全部回到开局。
+
+        顶栏倒计时右边的按钮、菜单里的「重新开始本关」、失败页的「重新开始」
+        走的都是这一条 —— 点了会给一句提示，免得不知道发生了什么。
+        """
         self.board.reset()
         self._clear_effects()
         self.time_left = float(self.current_level.get("time_limit", 240))
@@ -624,6 +664,7 @@ class Game:
         self.pan = [0.0, 0.0]
         self._compute_geometry()
         self.state = GameState.PLAYING
+        self.toast("已重新开始")
 
     def back_home(self):
         self._clear_effects()
@@ -1494,47 +1535,90 @@ class Game:
             self.rules_layout = self._compute_rules_layout()
         return self.rules_layout
 
+    def _rules_head(self, title_pad=RULES_TITLE_PAD, head_gap=RULES_HEAD_GAP):
+        """题头带高度：面板标题的字高 + 上下留白。
+
+        正文 / 表格第一行一律从这条带子下面开始 —— 标题压住正文这种事，
+        只要正文起点是「字体高度算出来的」就不可能再发生。
+        """
+        return self.font_big.get_height() + title_pad + head_gap
+
     def _compute_rules_layout(self):
         """每块面板的高度**由内容算出来**，下一块接着往下排。
 
         原来三块面板的 y 与高度都是写死的数字，正文一长就会顶出卡片右边 ——
         卡片宽度不变、文字又不会折行，而且这种溢出不会有任何报错，只能靠
         肉眼发现。改成按内容累加之后，往文案里再加一句话也不会溢出。
+
+        累加完还要过一道「整页塞得进窗口」的检查：四块面板 + 底部提示 +
+        返回按钮一路堆下来很容易超过 1140，而超出的部分**同样不报错**
+        （只是被画到画面外面去，看上去就是底部「缺了一块」）。所以这里按
+        ``RULES_SQUEEZE`` 逐档收紧行距与留白，直到最后一行离底边还留着
+        ``RULES_BOTTOM_PAD``；收紧有下限，挤到底仍塞不下就保持最后一版，
+        由回归测试盯住整页高度。
         """
+        floors = {name: low for name, _start, low in RULES_SQUEEZE}
+        current = {name: start for name, start, _low in RULES_SQUEEZE}
+        layout = self._build_rules_layout(current)
+        for _ in range(40):
+            if layout["esc_y"] <= WINDOW_HEIGHT - RULES_BOTTOM_PAD:
+                break
+            current = {name: max(floors[name], value - 1)
+                       for name, value in current.items()}
+            layout = self._build_rules_layout(current)
+        return layout
+
+    def _build_rules_layout(self, m):
+        """按 ``m`` 里那七个旋钮的当前值，把四块面板从上往下量一遍。"""
+        head = self._rules_head(m["title_pad"], m["head_gap"])
+        gap = m["gap"]
+        line_h = m["line_h"]
+        para_gap = m["para_gap"]
         left = 24
         width = WINDOW_WIDTH - left * 2
         inner = width - RULES_MARGIN * 2
         how_lines, how_tops = [], []
-        offset = 54                       # 面板顶边 → 正文第一行
+        offset = head                      # 面板顶边 → 正文第一行
         for sentence in HOW_TO_PLAY:
             if how_lines:
-                offset += RULES_PARA_GAP  # 三句话之间留一点，不然六行糊成一段
+                offset += para_gap         # 三句话之间留一点，不然六行糊成一段
             for line in paint.wrap_text(self.font_normal, sentence, inner):
                 how_lines.append(line)
                 how_tops.append(offset)
-                offset += RULES_LINE_H
+                offset += line_h
 
         y = RULES_TOP
         how = pygame.Rect(left, y, width, offset + 14)
-        y = how.bottom + RULES_GAP
+        y = how.bottom + gap
         keys = pygame.Rect(
             left, y, width,
-            RULES_KEYS_PAD_TOP + 6 + (len(KEY_HINTS) - 1) * RULES_KEY_ROW_H + 32)
-        y = keys.bottom + RULES_GAP
-        modes = pygame.Rect(left, y, width, RULES_MODES_H)
-        y = modes.bottom + RULES_GAP
+            head + RULES_KEY_CAP_H + (len(KEY_HINTS) - 1) * m["key_row_h"]
+            + 16)
+        y = keys.bottom + gap
+        modes = pygame.Rect(
+            left, y, width,
+            head + RULES_KEY_CAP_H // 2 + (len(MODE_LINES) - 1)
+            * m["modes_row_h"] + 30)
+        y = modes.bottom + gap
         prog_lines, prog_tops = [], []
-        poff = 60
+        poff = head
         for sentence in PROGRESS_HELP:
             if prog_lines:
-                poff += RULES_PARA_GAP
+                poff += para_gap
             for line in paint.wrap_text(self.font_normal, sentence, inner):
                 prog_lines.append(line)
                 prog_tops.append(poff)
-                poff += RULES_LINE_H
+                poff += line_h
         progress = pygame.Rect(left, y, width, poff + 14)
         y = progress.bottom + 16
         return {
+            "head": head,
+            "title_pad": m["title_pad"],
+            "line_h": line_h,
+            "para_gap": para_gap,
+            "key_row_h": m["key_row_h"],
+            "modes_row_h": m["modes_row_h"],
+            "gap": gap,
             "how": how,
             "how_lines": how_lines,
             "how_tops": how_tops,
@@ -1549,20 +1633,28 @@ class Game:
         }
 
     def _draw_rules(self):
-        """规则介绍：玩法说明 + 按键功能表 + 三种玩法。"""
+        """规则介绍：玩法说明 + 按键功能表 + 四种玩法 + 清空进度。
+
+        每块面板的标题都画在 ``panel.top + layout["title_pad"]``，正文从
+        ``panel.top + layout["head"]`` 开始 —— 两处都用同一份量出来的版式，
+        标题和正文之间不会再有「字叠字」的错位。
+        """
         pal = theme.get()
         cx = WINDOW_WIDTH // 2
         layout = self._rules_layout()
-        paint.blit_glow(self.canvas, (cx, 100), 260, pal.glow, 58, 2.0)
+        head = layout["head"]
+        title_pad = layout["title_pad"]
+        paint.blit_glow(self.canvas, (cx, 96), 260, pal.glow, 58, 2.0)
         paint.text_shadow(self.canvas, self.font_title, "玩法规则", pal.text,
-                          center=(cx, 100), shadow=(6, 12, 30), alpha=130,
-                          offset=(0, 3))
+                          center=(cx, RULES_TITLE_Y), shadow=(6, 12, 30),
+                          alpha=130, offset=(0, 3))
 
         # ---- 怎么玩 ----
         how = layout["how"]
         paint.draw_panel(self.canvas, how, 22)
         self._draw_text("怎么玩", self.font_big, pal.text_gold,
-                        topleft=(how.left + RULES_MARGIN, how.top + 18))
+                        topleft=(how.left + RULES_MARGIN,
+                                 how.top + title_pad))
         for line, top in zip(layout["how_lines"], layout["how_tops"]):
             self._draw_text(line, self.font_normal, pal.text_dim,
                             topleft=(how.left + RULES_MARGIN, how.top + top))
@@ -1571,7 +1663,8 @@ class Game:
         keys = layout["keys"]
         paint.draw_panel(self.canvas, keys, 22)
         self._draw_text("按键功能", self.font_big, pal.text_gold,
-                        topleft=(keys.left + RULES_MARGIN, keys.top + 18))
+                        topleft=(keys.left + RULES_MARGIN,
+                                 keys.top + title_pad))
         for row_index, row in enumerate(KEY_HINTS):
             for col_index, item in enumerate(row):
                 if item is None:
@@ -1582,22 +1675,19 @@ class Game:
                             keys.right - RULES_MARGIN - x)
                 self._draw_key_hint(
                     x,
-                    keys.top + RULES_KEYS_PAD_TOP + row_index * RULES_KEY_ROW_H,
+                    keys.top + head + RULES_KEY_CAP_H // 2
+                    + row_index * layout["key_row_h"],
                     item[0], item[1], avail)
 
         # ---- 四种玩法 ----
         modes = layout["modes"]
         paint.draw_panel(self.canvas, modes, 22)
         self._draw_text("四种玩法", self.font_big, pal.text_gold,
-                        topleft=(modes.left + RULES_MARGIN, modes.top + 18))
-        lines = (
-            (icons.star, "入门玩法", "3 关单格箭，从零开始练手"),
-            (icons.play, "基础玩法", "12 关，从小盘到大盘，难度一路递增"),
-            (icons.letter_a, "字母玩法", "26 个字母各一关，整盘铺成一个字母"),
-            (icons.dice, "随机关卡", "随机造型现场生成，每次都不一样"),
-        )
-        for index, (icon, name, desc) in enumerate(lines):
-            y = modes.top + 72 + index * 36
+                        topleft=(modes.left + RULES_MARGIN,
+                                 modes.top + title_pad))
+        for index, (icon, name, desc) in enumerate(MODE_LINES):
+            y = (modes.top + head + RULES_KEY_CAP_H // 2
+                 + index * layout["modes_row_h"])
             icon(self.canvas, (modes.left + 38, y), 22, pal.outline)
             self._draw_text(name, self.font_normal, pal.text,
                             topleft=(modes.left + 60, y - 14))
@@ -1609,7 +1699,7 @@ class Game:
         paint.draw_panel(self.canvas, progress, 22)
         self._draw_text("进度与设置", self.font_big, pal.text_gold,
                         topleft=(progress.left + RULES_MARGIN,
-                                 progress.top + 18))
+                                 progress.top + title_pad))
         for line, top in zip(layout["progress_lines"], layout["progress_tops"]):
             self._draw_text(line, self.font_normal, pal.text_dim,
                             topleft=(progress.left + RULES_MARGIN,
@@ -1623,9 +1713,14 @@ class Game:
                         center=(cx, layout["esc_y"]))
 
     def _draw_key_hint(self, x, y, key, label, width=RULES_KEY_COL_W):
-        """一个按键胶囊 + 右侧说明；说明超宽就折成两行，不往下一行挤。"""
+        """一个按键胶囊 + 右侧说明；说明超宽就折成两行，不往下一行挤。
+
+        说明文字按**行块的中心**对准胶囊中心（不是按第一行的字顶对齐）——
+        单行时两行的字中线正好重合，折成两行时整块也是围着胶囊居中。
+        """
         pal = theme.get()
-        capsule = pygame.Rect(x, y - 16, 62, 32)
+        capsule = pygame.Rect(x, y - RULES_KEY_CAP_H // 2, 62,
+                              RULES_KEY_CAP_H)
         paint.draw_card(self.canvas, capsule, 9, fill_top=pal.card_top,
                         fill_bottom=pal.card_bottom, border=pal.surface_line,
                         border_width=1)
@@ -1633,11 +1728,11 @@ class Game:
                         center=capsule.center)
         lines = paint.wrap_text(self.font_small, label,
                                 max(24, width - (capsule.width + 12)))
-        # 折成两行时整体上移半行，跟左侧胶囊在视觉上仍然对齐
-        top = y - 10 - (len(lines) - 1) * 11
+        pitch = self.font_small.get_height()
+        top = capsule.centery - len(lines) * pitch // 2
         for index, line in enumerate(lines):
             self._draw_text(line, self.font_small, pal.text_dim,
-                            topleft=(capsule.right + 12, top + index * 22))
+                            topleft=(capsule.right + 12, top + index * pitch))
 
     def _tutorial_rects(self):
         """入门选关页的三张宽卡，上下排开。

@@ -533,93 +533,98 @@ LEVELS = [
 ]
 
 
-# 入门玩法：3 关，每支箭都是「单格箭」（cells 只占一格），专门给新手练手。
-# 单格箭只沿自身那格、再按 dir 飞出，棋盘逻辑（can_fly_arrow）只看箭头端
-# 射线上有没有别的线段，所以整关极好读懂。三关难度递进，箭也比原先密得多
-# （原来只有 3/4/5 支，点两下就完了）：
-#   入门 1：八支箭分别贴在上下左右四边、一律朝盘外飞，全都立刻能飞，
-#           先把「点箭即飞」练熟；
-#   入门 2：中间一排六支箭首尾相接成一条阻挡链，只能从最右往左点，
-#           外加两支朝盘外的自由箭；
-#   入门 3：上下两条阻挡链（各四支）+ 两支自由箭，练「先清挡路的再清被挡的」。
+# ---------------- 入门玩法（3 关，全部单格箭） ----------------
 #
-# ids 用 T1/T2/T3：存档是按 id 判重的，必须避开基础关（1~12）与字母关（A~Z），
-# 否则「清掉基础第 1 关」会顺手把入门第 1 关也标成已通关。
-# 界面上显示的关号是 1/2/3（见 ``Game._level_display_number``），不再显示 101/102。
+# 单格箭只占一格、只沿自身那格再按 dir 飞出，棋盘逻辑（can_fly_arrow）只看
+# 箭头端正前方那条射线上有没有别的线段，所以新手一眼就能读懂。
+#
+# 盘面按「铺满棋盘一半以上」摆（原来三关只占 7%，点两下就空了）：
+#   入门 1：每行一串朝右的单格箭，一排挡一排，从最右边一支一支往左点；
+#   入门 2：上半盘全朝上、下半盘全朝下，两边各自从贴着盘边的那支开始清；
+#   入门 3：两侧竖列 + 中间四条横行 + 两条下沉列，纵横交叉 —— 先清竖列
+#           把横行的射线让出来，再收横行，最后从下往上收下沉列。
+#
+# ids 用 T1/T2/T3 —— 存档是按 id 判重的，必须避开基础关（1~12）与字母关
+# （A~Z），否则「清掉基础第 1 关」会顺手把入门第 1 关也标成已通关。界面上
+# 显示的关号是 1/2/3（见 ``Game._level_display_number``），不再显示 101/102。
+#
+# 红心跟主线一样是 3 颗（``mistakes``）。
+#
+# ``solution`` 不手写：摆完格子交给 game/solver.py 的拓扑排序算一条合法解 ——
+# 摆成死局会在导入时直接报错，改了盘面也不用手工重排顺序。
+
+
+def _single_cell_arrows(spans):
+    """把「一串格子 + 一个方向」铺成单格箭，颜色顺着调色板轮转。
+
+    spans 里每项是 ``(rows, cols, direction)``：rows / cols 是可迭代的格子
+    下标，逐格生成一支单格箭。同一串同向天然就是一条阻挡链 —— 只能从箭头
+    所指的那一端往回点。
+    """
+    arrows = []
+    for rows, cols, direction in spans:
+        for row in rows:
+            for col in cols:
+                arrows.append({
+                    "cells": [[row, col]],
+                    "dir": direction,
+                    "color": len(arrows) % 10,
+                })
+    return arrows
+
+
+def _tutorial_level(level_id, name, desc, rows, cols, time_limit, spans):
+    """补齐一整关的数据，并用求解器算出一条合法解。"""
+    from game.board import Board
+    from game.solver import solve
+
+    arrows = _single_cell_arrows(spans)
+    level = {
+        "id": level_id,
+        "name": name,
+        "desc": desc,
+        "shape": "rect",
+        "mistakes": 3,                     # 红心 3 颗，跟主线一致
+        "rows": rows,
+        "cols": cols,
+        "seed": 101000 + len(arrows),      # 只作复现记录，运行时不参与逻辑
+        "time_limit": time_limit,
+        "arrows": arrows,
+    }
+    order = solve(Board(level))
+    if not order:
+        raise ValueError("入门关 %s 摆成了死局，改一下盘面" % level_id)
+    level["solution"] = order
+    return level
+
+
 TUTORIAL_LEVELS = [
-    {
-        'id': 'T1',
-        'name': '入门 1 点箭即飞',
-        'desc': '朝盘外，点哪支都飞',
-        'shape': 'rect',
-        'mistakes': 5,
-        'rows': 9,
-        'cols': 13,
-        'seed': 101001,
-        'time_limit': 300,
-        'arrows': [
-            {'cells': [[0, 2]], 'dir': 'U', 'color': 4},
-            {'cells': [[0, 6]], 'dir': 'U', 'color': 6},
-            {'cells': [[0, 10]], 'dir': 'U', 'color': 2},
-            {'cells': [[8, 2]], 'dir': 'D', 'color': 8},
-            {'cells': [[8, 6]], 'dir': 'D', 'color': 1},
-            {'cells': [[8, 10]], 'dir': 'D', 'color': 3},
-            {'cells': [[3, 0]], 'dir': 'L', 'color': 5},
-            {'cells': [[5, 12]], 'dir': 'R', 'color': 7},
+    # 6x8=48 格，30 支（62%）：三行铺 cols 0~4、三行铺 cols 1~5，全是朝右的链
+    _tutorial_level(
+        "T1", "入门 1 满盘齐飞", "每行一串，从右往左点", 6, 8, 300,
+        [
+            ((0, 2, 4), range(0, 5), "R"),
+            ((1, 3, 5), range(1, 6), "R"),
         ],
-        'solution': [0, 1, 2, 3, 4, 5, 6, 7],
-    },
-    {
-        'id': 'T2',
-        'name': '入门 2 先来后到',
-        'desc': '一排六支，从右往左点',
-        'shape': 'rect',
-        'mistakes': 5,
-        'rows': 9,
-        'cols': 13,
-        'seed': 102002,
-        'time_limit': 300,
-        'arrows': [
-            # 一排六支全部朝右：右边的挡着左边的，只能从最右往左点
-            {'cells': [[4, 1]], 'dir': 'R', 'color': 4},
-            {'cells': [[4, 3]], 'dir': 'R', 'color': 6},
-            {'cells': [[4, 5]], 'dir': 'R', 'color': 2},
-            {'cells': [[4, 7]], 'dir': 'R', 'color': 8},
-            {'cells': [[4, 9]], 'dir': 'R', 'color': 1},
-            {'cells': [[4, 11]], 'dir': 'R', 'color': 3},
-            # 两支朝盘外的自由箭，什么时候点都行
-            {'cells': [[0, 0]], 'dir': 'U', 'color': 5},
-            {'cells': [[8, 0]], 'dir': 'D', 'color': 7},
+    ),
+    # 7x9=63 格，35 支（56%）：上半 3 行朝上、下半 3 行朝下，中间一行朝右
+    _tutorial_level(
+        "T2", "入门 2 上下分头", "上半朝上、下半朝下", 7, 9, 300,
+        [
+            ((0, 1, 2), range(1, 6), "U"),
+            ((4, 5, 6), range(1, 6), "D"),
+            ((3,), range(1, 6), "R"),
         ],
-        'solution': [5, 4, 3, 2, 1, 0, 6, 7],
-    },
-    {
-        'id': 'T3',
-        'name': '入门 3 双线齐发',
-        'desc': '两排链，先清挡路的',
-        'shape': 'rect',
-        'mistakes': 5,
-        'rows': 11,
-        'cols': 15,
-        'seed': 103003,
-        'time_limit': 320,
-        'arrows': [
-            # 上面一条链：同样朝右，从最右往左点
-            {'cells': [[2, 1]], 'dir': 'R', 'color': 4},
-            {'cells': [[2, 4]], 'dir': 'R', 'color': 6},
-            {'cells': [[2, 7]], 'dir': 'R', 'color': 2},
-            {'cells': [[2, 10]], 'dir': 'R', 'color': 8},
-            # 下面一条链：同上
-            {'cells': [[8, 1]], 'dir': 'R', 'color': 1},
-            {'cells': [[8, 4]], 'dir': 'R', 'color': 3},
-            {'cells': [[8, 7]], 'dir': 'R', 'color': 5},
-            {'cells': [[8, 10]], 'dir': 'R', 'color': 7},
-            # 两支自由箭
-            {'cells': [[0, 0]], 'dir': 'U', 'color': 0},
-            {'cells': [[10, 0]], 'dir': 'D', 'color': 2},
+    ),
+    # 8x10=80 格，48 支（60%）：两侧竖列 + 四条横行 + 两条下沉列
+    _tutorial_level(
+        "T3", "入门 3 纵横交叉", "横行纵列交叉", 8, 10, 360,
+        [
+            (range(0, 8), (0, 9), "U"),
+            ((1, 3, 5, 7), range(1, 7), "R"),
+            ((0, 2, 4, 6), (3, 6), "D"),
         ],
-        'solution': [3, 2, 1, 0, 7, 6, 5, 4, 8, 9],
-    },
+    ),
 ]
 
 

@@ -198,18 +198,53 @@ def plus_badge(surface, center, radius, color, bg):
 
 
 def undo(surface, center, size, color, thickness=2):
-    """撤销：一段圆弧加一个箭头。"""
+    """撤销：一段圆弧加一个箭头。
+
+    圆弧是逐点连出来的 —— ``pygame.draw.arc`` 在「半径只有十几像素、线宽
+    又大于 1」时会直接画不出东西（图标位置就剩一块空白），所以不用它。
+    """
     cx, cy = center
     radius = size * 0.34
-    rect = pygame.Rect(0, 0, int(radius * 2), int(radius * 2))
-    rect.center = (int(cx), int(cy) + int(size * 0.06))
-    pygame.draw.arc(surface, color, rect, math.pi * 0.15, math.pi * 1.05,
-                    thickness)
+    points = []
+    for step in range(19):
+        angle = math.radians(20 + step * (150 / 18))
+        points.append((int(round(cx + math.cos(angle) * radius)),
+                       int(round(cy + math.sin(angle) * radius))))
+    pygame.draw.lines(surface, color, False, points, thickness)
     tip = (cx - radius * 0.86, cy - radius * 0.05)
     pygame.draw.polygon(surface, color, [
         (tip[0] - size * 0.08, tip[1] - size * 0.02),
         (tip[0] + size * 0.10, tip[1] - size * 0.12),
         (tip[0] + size * 0.10, tip[1] + size * 0.14),
+    ])
+
+
+def restart(surface, center, size, color, thickness=3, steps=30):
+    """重新开始：将近整圈的圆弧 + 一个箭头，缺口留在正上方。
+
+    跟 ``undo`` 一样避开 ``pygame.draw.arc``（小半径下它会画不出像素），
+    用 ``draw.lines`` 把圆点连出来再补一个三角箭头。
+    """
+    cx, cy = center
+    radius = size * 0.32
+    start, sweep = -50.0, 300.0
+    points = []
+    for step in range(steps + 1):
+        angle = math.radians(start + sweep * step / steps)
+        points.append((int(round(cx + math.cos(angle) * radius)),
+                       int(round(cy + math.sin(angle) * radius))))
+    pygame.draw.lines(surface, color, False, points, thickness)
+
+    # 箭头接在圆弧的起点（右上角），朝切线方向指出去
+    angle = math.radians(start)
+    base = (cx + math.cos(angle) * radius, cy + math.sin(angle) * radius)
+    tangent = (-math.sin(angle), math.cos(angle))
+    normal = (-tangent[1], tangent[0])
+    head, half = size * 0.26, size * 0.15
+    pygame.draw.polygon(surface, color, [
+        (base[0] + tangent[0] * head, base[1] + tangent[1] * head),
+        (base[0] + normal[0] * half, base[1] + normal[1] * half),
+        (base[0] - normal[0] * half, base[1] - normal[1] * half),
     ])
 
 
@@ -223,6 +258,19 @@ def arrow_left(surface, center, size, color, thickness=3):
         (cx - half - size * 0.06, cy),
         (cx - half + size * 0.20, cy - size * 0.22),
         (cx - half + size * 0.20, cy + size * 0.22),
+    ])
+
+
+def arrow_right(surface, center, size, color, thickness=3):
+    """右箭头：顶栏「还剩几支箭」的小图标（跟「返回」的左箭头成对）。"""
+    cx, cy = center
+    half = size * 0.34
+    pygame.draw.line(surface, color, (cx - half, cy), (cx + half, cy),
+                     thickness)
+    pygame.draw.polygon(surface, color, [
+        (cx + half + size * 0.06, cy),
+        (cx + half - size * 0.20, cy - size * 0.22),
+        (cx + half - size * 0.20, cy + size * 0.22),
     ])
 
 

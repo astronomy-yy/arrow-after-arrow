@@ -54,14 +54,17 @@ def main():
     game.open_tutorial_select()
     shoot(game, "tutorial_select.png")
 
-    # 入门关盘面：整盘都是单格箭
+    # 入门关盘面：整盘都是单格箭，三关一关比一关密
     game.use_track("tutorial")
-    game.level_index = 0
-    game.level_number = game._level_display_number(0)
-    game._load_level(game.tutorial_levels[0])
-    game.state = GameState.PLAYING
-    game._compute_geometry()
-    shoot(game, "playing_tutorial1.png")
+    for index, name in ((0, "playing_tutorial1.png"),
+                        (1, "playing_tutorial2.png"),
+                        (2, "playing_tutorial3.png")):
+        game.level_index = index
+        game.level_number = game._level_display_number(index)
+        game._load_level(game.tutorial_levels[index])
+        game.state = GameState.PLAYING
+        game._compute_geometry()
+        shoot(game, name)
 
     # 基础玩法选关
     game.open_basic_select()
