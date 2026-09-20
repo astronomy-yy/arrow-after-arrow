@@ -171,6 +171,7 @@ class HudInfo:
 
     def __init__(self, game):
         self.level_number = game.level_number
+        self.is_random = game.is_random
         self.hearts = game.board.mistakes
         self.max_hearts = game.board.max_mistakes
         self.time_left = game.time_left
@@ -238,7 +239,9 @@ class Game:
         self.level_number = 1
         self.current_level = self.levels[0]
         self.board = Board(self.current_level)
-        self.random_counter = len(self.levels)
+        self.is_random = False
+        # 随机关卡内部从 1 开始独立编号，不接在基础 / 字母关后面
+        self.random_counter = 0
 
         # ---- 玩法状态 ----
         self.state = GameState.START
@@ -563,6 +566,10 @@ class Game:
         self.new_random_level()
 
     def next_level(self):
+        # 随机关卡「下一关」再生成一关随机，不跳进基础 / 字母关列表
+        if self.is_random:
+            self.new_random_level()
+            return
         if self.level_index + 1 < len(self.levels):
             self.level_index += 1
             self.level_number = self.levels[self.level_index].get(
@@ -598,6 +605,8 @@ class Game:
 
     def _load_level(self, level):
         self.current_level = level
+        # 不在当前关卡列表里的就是随机关卡（现场生成，不在 levels 中）
+        self.is_random = not any(level is lv for lv in self.levels)
         self.board = Board(level)
         self._clear_effects()
         self.time_left = float(level.get("time_limit", 240))
@@ -808,6 +817,7 @@ class Game:
 
     def new_random_level(self):
         level = make_random_level()
+        level["name"] = "随机关卡"
         self.random_counter += 1
         level["id"] = self.random_counter
         self.level_number = self.random_counter

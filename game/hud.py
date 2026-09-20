@@ -113,19 +113,28 @@ class Hud:
         self.settings_button.draw(surface)
         self.theme_switch.draw(surface)
 
-        title = self.font_title.render("关卡", True, pal.text)
-        number = self.font_title.render(str(info.level_number), True,
-                                       pal.text_gold)
-        total = title.get_width() + number.get_width()
-        x = (WINDOW_WIDTH - total) // 2
-        rect = title.get_rect(midleft=(x, TITLE_CENTER_Y))
-        paint.text_shadow(surface, self.font_title, "关卡", pal.text,
-                          center=rect.center, shadow=(4, 8, 20), alpha=110)
-        number_rect = number.get_rect(
-            midleft=(x + title.get_width(), TITLE_CENTER_Y))
-        paint.text_shadow(surface, self.font_title, str(info.level_number),
-                          pal.text_gold, center=number_rect.center,
-                          shadow=(58, 34, 4), alpha=120)
+        if info.is_random:
+            # 随机关卡：不跟基础 / 字母关连号，顶栏就叫「随机关卡」
+            label = self.font_title.render("随机关卡", True, pal.text_gold)
+            rect = label.get_rect(center=(WINDOW_WIDTH // 2, TITLE_CENTER_Y))
+            paint.text_shadow(surface, self.font_title, "随机关卡",
+                              pal.text_gold, center=rect.center,
+                              shadow=(58, 34, 4), alpha=120)
+        else:
+            title = self.font_title.render("关卡", True, pal.text)
+            number = self.font_title.render(str(info.level_number), True,
+                                            pal.text_gold)
+            total = title.get_width() + number.get_width()
+            x = (WINDOW_WIDTH - total) // 2
+            rect = title.get_rect(midleft=(x, TITLE_CENTER_Y))
+            paint.text_shadow(surface, self.font_title, "关卡", pal.text,
+                              center=rect.center, shadow=(4, 8, 20), alpha=110)
+            number_rect = number.get_rect(
+                midleft=(x + title.get_width(), TITLE_CENTER_Y))
+            paint.text_shadow(surface, self.font_title,
+                              str(info.level_number), pal.text_gold,
+                              center=number_rect.center, shadow=(58, 34, 4),
+                              alpha=120)
 
         # 红心
         filled = info.hearts
