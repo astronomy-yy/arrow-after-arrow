@@ -435,35 +435,138 @@ def test_start_screen_layout_keeps_everything_apart(game):
     assert stats.bottom <= 1140
 
 
-def test_art_title_is_drawn_above_the_buttons(game):
-    """标题是艺术字：有渐变（上亮下暗）与描边，而且真的画在按钮上方。"""
-    game.state = GameState.START
-    game._draw()
-    pal = theme.get()
-    title = paint.art_text(
-        game.font_title, "一箭又一箭", top=pal.art_top,
-        bottom=pal.art_bottom, outline=pal.art_outline, outline_width=3,
-        highlight=pal.art_gloss, shadow=(14, 16, 34), shadow_offset=(0, 5))
-    size = game.font_title.size("一箭又一箭")
-    # 外描边 + 投影占了余量，图比裸文字大一圈
-    assert title.get_width() > size[0] and title.get_height() > size[1]
+def test_art_title_is_a_cartoon_sticker_banner(game):
+    """标题是拼装出来的卡通贴纸字，而且真的画在按钮上方。
 
-    pixels = [(x, y) for y in range(title.get_height())
-              for x in range(title.get_width())
-              if title.get_at((x, y))[3] > 200]
-    assert len(pixels) > 800, len(pixels)
-    ys = [p[1] for p in pixels]
+    参照玩家给的截图：奶白字面 + 深色内边 + 浅色外边（三层对比，日夜底色上都清晰），
+    前后两个「一」是红 / 蓝胶囊横条，末尾的「箭」换成绿色收尾。
+    """
+    game.state = GameState.START
+    placed = game._draw_start_title((game.canvas.get_width() // 2, 228))
+    banner = game._start_title_image()
+
+    # 画在按钮上方，且左右都不顶到屏幕边
+    assert placed.bottom < game.start_buttons[0].rect.top - 40, placed
+    assert placed.left > 0 and placed.right < game.canvas.get_width(), placed
+    # 宽度要占到大半个屏幕（参照图里标题约占 88%）
+    assert banner.get_width() > game.canvas.get_width() * 0.7, banner.get_size()
+
+    pixels = [(x, y) for y in range(banner.get_height())
+              for x in range(banner.get_width())
+              if banner.get_at((x, y))[3] > 200]
+    assert len(pixels) > 2000, len(pixels)
+
+    def has(predicate):
+        return any(predicate(banner.get_at(pos)) for pos in pixels)
+
+    assert has(lambda c: min(c[:3]) > 230), "缺奶白字面"
+    assert has(lambda c: max(c[:3]) < 90), "缺深色内边"
+    assert has(lambda c: c[0] > 190 and c[1] < 130 and c[2] < 130), "缺红色横条"
+    assert has(lambda c: c[2] > 190 and c[0] < 130 and c[1] < 190), "缺蓝色横条"
+    assert has(lambda c: c[1] > 170 and c[0] < 170 and c[2] < 180), "缺绿色收尾"
+
+    ys = [pos[1] for pos in pixels]
 
     def mean(start, end):
-        group = [title.get_at(pos) for pos in pixels if start <= pos[1] < end]
+        group = [banner.get_at(pos) for pos in pixels if start <= pos[1] < end]
         return tuple(sum(p[i] for p in group) / len(group) for i in range(3))
 
-    lighter = mean(min(ys), min(ys) + 8)
-    darker = mean(max(ys) - 8, max(ys) + 1)
-    assert sum(lighter) > sum(darker), (lighter, darker)   # 上亮下暗
-    edge = [c for pos in pixels for c in (title.get_at(pos),) if c[0] < 160]
-    assert edge, "找不到描边色像素"
-    assert game.start_buttons[0].rect.top > 300
+    lighter = mean(min(ys), min(ys) + 10)
+    darker = mean(max(ys) - 10, max(ys) + 1)
+    assert sum(lighter) > sum(darker), (lighter, darker)     # 字面上亮下暗
+
+
+def big_font(size=40):
+    """测试用的粗体字：``game`` fixture 收尾会 ``pygame.quit()``，这里补一次 init。"""
+    if not pygame.font.get_init():
+        pygame.font.init()
+    return pygame.font.SysFont("microsoftyahei,simhei,arial", size, bold=True)
+
+
+def test_art_bar_is_a_round_ended_capsule():
+    """横条是圆头胶囊，不是方块；照样有描边和字面。"""
+    bar = paint.art_bar(120, 30, (236, 84, 66), outline=(30, 28, 32),
+                        outline_width=5, outline2=(255, 255, 255),
+                        outline2_width=3, highlight=(255, 255, 255), lift=2)
+    width, height = bar.get_size()
+    assert width > 120 and height > 30, bar.get_size()   # 描边撑大一圈
+
+    middle = bar.get_at((width // 2, height // 2))
+    assert middle[0] > 190 and middle[1] < 130 and middle[2] < 130, middle
+
+    # 圆头：两端在垂直中间以外应当是空的（方头的话这里会有颜色）
+    assert bar.get_at((2, 2))[3] < 60, bar.get_at((2, 2))
+    assert bar.get_at((width - 3, height - 3))[3] < 60
+
+    column = [bar.get_at((width // 2, y)) for y in range(height)]
+    assert any(max(c[:3]) < 90 and c[3] > 200 for c in column), "缺深色内边"
+
+
+def test_art_banner_packs_pieces_by_their_ink():
+    """拼装按**墨迹**排布：每片四周的描边留白不许变成片间距。"""
+    font = big_font(40)
+    face = {"top": (255, 252, 240), "bottom": (238, 212, 150)}
+    kwargs = dict(outline=(30, 28, 32), outline_width=5,
+                  outline2=(255, 255, 255), outline2_width=3)
+    pieces = [{"kind": "text", "text": "箭", **face} for _ in range(2)]
+    banner = paint.art_banner(font, pieces, gap=6, **kwargs)
+    single = paint.art_banner(font, pieces[:1], gap=6, **kwargs)
+
+    # 按墨迹排布：两条正好是「单片墨迹宽 × 2 + gap」。
+    # 若改成按整片宽度累加，这里会多出两倍的描边留白（本用例里约 72 px）。
+    assert banner.get_width() == single.get_width() * 2 + 6, \
+        (banner.get_width(), single.get_width())
+    # 画布已经贴着墨迹，不留多余空白
+    ink = banner.get_bounding_rect()
+    assert ink.width >= banner.get_width() - 4, (ink, banner.get_size())
+
+
+def test_art_text_second_outline_sits_outside_the_first():
+    """双层描边：外层浅色确实在外层，图也比单层的更大。"""
+    font = big_font(40)
+    base = dict(top=(255, 252, 240), bottom=(238, 212, 150),
+                outline=(30, 28, 32), outline_width=5)
+    single = paint.art_text(font, "A", **base)
+    double = paint.art_text(font, "A", outline2=(255, 255, 255),
+                            outline2_width=3, **base)
+
+    assert double.get_width() > single.get_width()
+    assert double.get_height() > single.get_height()
+
+    def near_white(surface):
+        """纯白像素数：字面最亮处也只到 240，阈值取 248 能把外圈单独挑出来。"""
+        return sum(1 for y in range(surface.get_height())
+                   for x in range(surface.get_width())
+                   if surface.get_at((x, y))[3] > 200
+                   and min(surface.get_at((x, y))[:3]) > 248)
+
+    # 外圈 3 px 宽，缩回后只有环心那一列还是纯白，40 号「A」大约 137 个像素
+    assert near_white(single) == 0, near_white(single)
+    assert near_white(double) >= 100, near_white(double)
+
+
+def test_art_text_lift_thickens_the_bottom_edge():
+    """``lift`` 把描边往下推：底部那圈边明显比顶部厚，字就「浮」起来了。
+
+    用「口」量：取中间一列，比较「字面顶边到墨迹顶边」与「字面底边到墨迹底边」。
+    """
+    font = big_font(80)
+    base = dict(top=(255, 252, 240), bottom=(238, 212, 150),
+                outline=(30, 28, 32), outline_width=8)
+
+    def edges(surface):
+        x = surface.get_width() // 2
+        column = [surface.get_at((x, y)) for y in range(surface.get_height())]
+        solid = [y for y, c in enumerate(column) if c[3] > 140]
+        face = [y for y, c in enumerate(column)
+                if c[3] > 200 and min(c[:3]) > 200]
+        assert solid and face, "中间列上找不到墨迹或字面"
+        return face[0] - solid[0], solid[-1] - face[-1]
+
+    flat = edges(paint.art_text(font, "口", **base))
+    lifted = edges(paint.art_text(font, "口", lift=6, **base))
+    assert lifted[1] > lifted[0], lifted              # 底部比顶部厚
+    assert lifted[1] > flat[1], (flat, lifted)        # 比不加 lift 时更厚
 
 
 def test_redraw_is_not_pathologically_slow(game):

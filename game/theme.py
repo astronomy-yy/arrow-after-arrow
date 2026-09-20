@@ -64,10 +64,15 @@ class Palette:
     btn_text: tuple
     accent: tuple          # 强调色（选中 / 悬停描边）
     # ---- 艺术字（开始页标题）----
-    art_top: tuple         # 渐变上端
-    art_bottom: tuple      # 渐变下端
-    art_outline: tuple     # 外描边
+    art_top: tuple         # 字面渐变上端
+    art_bottom: tuple      # 字面渐变下端
+    art_outline: tuple     # 内圈描边（深色那圈）
     art_gloss: tuple       # 顶部高光
+    art_edge: tuple        # 外圈描边（浅色那圈，在深色背景上把字托出来）
+    art_bar_a: tuple       # 装饰横条（前一个「一」）
+    art_bar_b: tuple       # 装饰横条（后一个「一」）
+    art_alt_top: tuple     # 末尾那个字的字面渐变上端（换个颜色做收尾）
+    art_alt_bottom: tuple  # 末尾那个字的字面渐变下端
 
 
 NIGHT = Palette(
@@ -111,11 +116,17 @@ NIGHT = Palette(
     btn_line=(136, 184, 255),
     btn_text=(255, 255, 255),
     accent=(120, 214, 240),
-    # 深蓝紫底上金色标题最跳，描边压到近黑的棕
-    art_top=(255, 238, 176),
-    art_bottom=(236, 158, 38),
-    art_outline=(84, 44, 8),
-    art_gloss=(255, 255, 236),
+    # 卡通贴纸配方：奶白字面 + 近黑内边 + 浅色外边（三层对比，任何底色上都清晰）
+    art_top=(255, 252, 240),
+    art_bottom=(238, 212, 150),
+    art_outline=(30, 28, 32),
+    art_gloss=(255, 255, 255),
+    # 深底上外圈压成淡蓝白，纯白会亮得刺眼
+    art_edge=(196, 206, 236),
+    art_bar_a=(236, 84, 66),
+    art_bar_b=(78, 162, 236),
+    art_alt_top=(124, 212, 142),
+    art_alt_bottom=(52, 158, 92),
 )
 
 DAY = Palette(
@@ -159,11 +170,16 @@ DAY = Palette(
     btn_line=(160, 202, 255),
     btn_text=(255, 255, 255),
     accent=(38, 176, 164),
-    # 浅底上金色要压深一档，否则整行标题发白看不清
-    art_top=(248, 190, 44),
-    art_bottom=(198, 108, 10),
-    art_outline=(112, 58, 6),
-    art_gloss=(255, 248, 214),
+    # 和夜间同一套卡通贴纸配色；外圈换成奶黄，浅底上才看得出这一圈边界
+    art_top=(255, 253, 244),
+    art_bottom=(246, 222, 162),
+    art_outline=(32, 30, 34),
+    art_gloss=(255, 255, 255),
+    art_edge=(255, 249, 224),
+    art_bar_a=(236, 84, 66),
+    art_bar_b=(78, 162, 236),
+    art_alt_top=(124, 212, 142),
+    art_alt_bottom=(52, 158, 92),
 )
 
 THEMES = {"night": NIGHT, "day": DAY}

@@ -14,6 +14,7 @@
 """
 
 import math
+from functools import lru_cache
 
 import pygame
 
@@ -310,12 +311,15 @@ def text_shadow(target, font, text, color, center=None, topleft=None,
 ART_SUPERSAMPLE = 3
 
 
+@lru_cache(maxsize=64)
 def _disc_offsets(radius):
     """半径 radius 内所有整数偏移点，按离中心由近到远排序。
 
     描边就是把这个圆盘上的每个点都盖一遍。用圆盘（而不是 4 / 8 个方向）
     是为了让斜向的笔画也有足量的覆盖 —— 只铺 8 个方向的话，描边会在
     斜边上被啃出缺口。
+
+    只跟半径有关，直接缓存（半径 18 时是 1009 个点，每次现算不划算）。
     """
     radius = max(0, int(radius))
     points = [(dx, dy) for dy in range(-radius, radius + 1)
@@ -325,8 +329,13 @@ def _disc_offsets(radius):
     return points
 
 
+# 描边膨胀的分辨率折扣：见 art_text.stamp 里的说明
+EDGE_DOWN = 2
+
+
 def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
-             highlight=None, shadow=None, shadow_offset=(0, 4), alpha=255):
+             highlight=None, shadow=None, shadow_offset=(0, 4), alpha=255,
+             outline2=None, outline2_width=0, lift=0):
     """艺术字：竖向渐变填充 + 外描边 + 顶部高光 + 投影。
 
     做法是「先放大、再加工、最后缩回」：把文字渲染结果放大
@@ -334,19 +343,29 @@ def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
     （每处等宽、拐角不缺角），渐变与高光都拿文字的 alpha 当遮罩乘上去，
     最后缩回原尺寸 —— 描边与斜边的锯齿一并被磨平。
 
+    ``outline2`` / ``outline2_width`` 是**第二圈描边**，画在 ``outline``
+    外面（卡通贴纸那种「深色内边 + 浅色外边」的双层边，浅色外圈负责在
+    深色背景上把字托出来）。
+
+    ``lift`` 让描边整体**向下**偏若干像素而字面不动，底部描边于是比顶部厚，
+    字看起来是浮在边上的 —— 这就是贴纸的立体感来源。单位是原始像素。
+
     返回的 surface 已经**把文字摆在正中间**，直接
     ``surface.get_rect(center=...)`` 就能摆位置。
     """
     top = rgb(top)
     bottom = rgb(bottom if bottom is not None else top)
     outline = rgb(outline) if outline else None
+    outline2 = rgb(outline2) if outline2 else None
     highlight = rgb(highlight) if highlight else None
     shadow = rgb(shadow) if shadow else None
     outline_width = max(0, int(outline_width))
+    outline2_width = max(0, int(outline2_width))
+    lift = int(lift)
     shadow_offset = (int(shadow_offset[0]), int(shadow_offset[1]))
     alpha = max(0, min(255, int(alpha)))
-    key = ("art", font, text, top, bottom, outline, outline_width, highlight,
-           shadow, shadow_offset, alpha)
+    key = ("art", font, text, top, bottom, outline, outline_width, outline2,
+           outline2_width, lift, highlight, shadow, shadow_offset, alpha)
 
     def build():
         base = font.render(text, True, (255, 255, 255))
@@ -355,22 +374,48 @@ def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
             return pygame.Surface((1, 1), pygame.SRCALPHA)
         s = ART_SUPERSAMPLE
         # 四周留出描边 + 投影需要的余量，留白对上下左右一致，中心才对得准
-        pad = outline_width + 2 + max(abs(shadow_offset[0]),
-                                      abs(shadow_offset[1]))
+        pad = (outline_width + outline2_width + 2
+               + max(abs(shadow_offset[0]), abs(shadow_offset[1]))
+               + abs(lift))
         big = pygame.transform.smoothscale(base, (width * s, height * s))
         canvas = pygame.Surface(((width + pad * 2) * s, (height + pad * 2) * s),
                                 pygame.SRCALPHA)
         canvas.fill((0, 0, 0, 0))
         origin = (pad * s, pad * s)
+        # 描边层整体下移 lift 像素（放大空间里要乘 s）
+        edge_shift = (0, lift * s)
 
         def stamp(color, radius, shift=(0, 0)):
-            """把文字染成 color，按 radius 铺满整个圆盘。"""
+            """把文字染成 color，按 ``radius`` 铺满整个圆盘。
+
+            ``radius`` 与 ``shift`` 都用**超采样空间**的单位，调用处负责乘 ``s``。
+
+            粗描边的圆盘动辄上千个偏移点，逐点 blit 整块文字很贵（半径 18 实测
+            42 ms）。所以先在 1/``EDGE_DOWN`` 分辨率上膨胀：偏移点数与单点面积
+            各降到 1/down²，总开销约 1/down⁴；再放大回去时边缘被插值柔化，
+            对一层纯色描边来说反倒更接近抗锯齿。半径小的时候不折腾。
+            """
             tinted = big.copy()
             tinted.fill((*color, 255), special_flags=pygame.BLEND_RGBA_MULT)
-            layer = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+            size = canvas.get_size()
             if radius <= 0:
+                layer = pygame.Surface(size, pygame.SRCALPHA)
                 layer.blit(tinted, (origin[0] + shift[0], origin[1] + shift[1]))
                 return layer
+            down = EDGE_DOWN if radius >= 2 * EDGE_DOWN else 1
+            if down > 1:
+                small = pygame.transform.smoothscale(
+                    tinted, (max(1, tinted.get_width() // down),
+                             max(1, tinted.get_height() // down)))
+                layer = pygame.Surface((max(1, size[0] // down),
+                                        max(1, size[1] // down)), pygame.SRCALPHA)
+                start = (origin[0] // down + shift[0] // down,
+                         origin[1] // down + shift[1] // down)
+                for (dx, dy) in _disc_offsets(max(1, int(round(radius / down)))):
+                    layer.blit(small, (start[0] + dx, start[1] + dy),
+                               special_flags=pygame.BLEND_RGBA_MAX)
+                return pygame.transform.smoothscale(layer, size)
+            layer = pygame.Surface(size, pygame.SRCALPHA)
             for (dx, dy) in _disc_offsets(radius):
                 layer.blit(tinted,
                            (origin[0] + shift[0] + dx,
@@ -378,10 +423,17 @@ def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
                            special_flags=pygame.BLEND_RGBA_MAX)
             return layer
 
+        # 下面这些宽度都是**原始像素**，进 stamp 前乘 s 换成超采样空间
         if shadow:
-            canvas.blit(stamp(shadow, outline_width, shadow_offset), (0, 0))
+            canvas.blit(stamp(shadow, (outline_width + outline2_width) * s,
+                              (shadow_offset[0] * s, shadow_offset[1] * s)),
+                        (0, 0))
+        # 先铺大圆盘的外圈色，再用内圈色盖掉中间 —— 于是只看得见 outline2_width 宽
+        if outline2:
+            canvas.blit(stamp(outline2, (outline_width + outline2_width) * s,
+                              edge_shift), (0, 0))
         if outline:
-            canvas.blit(stamp(outline, outline_width), (0, 0))
+            canvas.blit(stamp(outline, outline_width * s, edge_shift), (0, 0))
 
         # 主体：文字的 alpha 乘上竖向渐变
         body = big.copy()
@@ -408,6 +460,162 @@ def art_text(font, text, top, bottom=None, outline=None, outline_width=3,
 def draw_art_text(target, font, text, center, **kwargs):
     """按中心画一段艺术字，返回它占的 rect。"""
     image = art_text(font, text, **kwargs)
+    rect = image.get_rect(center=(int(center[0]), int(center[1])))
+    target.blit(image, rect)
+    return rect
+
+
+# --------------------------------------------------------------------------
+# 胶囊横条与拼装式标题：把「一」画成一根圆头横杠，几个元素横着拼成整条标题
+# --------------------------------------------------------------------------
+
+
+def art_bar(width, height, color, top=None, bottom=None, outline=None,
+            outline_width=0, outline2=None, outline2_width=0, highlight=None,
+            shadow=None, shadow_offset=(0, 4), lift=0, alpha=255):
+    """圆头横条（胶囊）：把「一」这类笔画具象成一根横杠。
+
+    与 :func:`art_text` 共用同一套渲染栈 —— 超采样 + 双层描边 + 竖向渐变
+    字面 + 顶部高光，所以横条和它旁边的字在描边粗细、立体感上完全一致。
+
+    ``pad`` 的算法与 ``art_text`` 逐项对齐（含 ``shadow_offset`` 的余量），
+    这样两者拼在一起时高度天然相等、底边一对就齐。
+    """
+    color = rgb(color)
+    top = rgb(top if top is not None else color)
+    bottom = rgb(bottom if bottom is not None else color)
+    outline = rgb(outline) if outline else None
+    outline2 = rgb(outline2) if outline2 else None
+    highlight = rgb(highlight) if highlight else None
+    shadow = rgb(shadow) if shadow else None
+    outline_width = max(0, int(outline_width))
+    outline2_width = max(0, int(outline2_width))
+    lift = int(lift)
+    shadow_offset = (int(shadow_offset[0]), int(shadow_offset[1]))
+    alpha = max(0, min(255, int(alpha)))
+    width = max(1, int(width))
+    height = max(2, int(height))
+    key = ("bar", width, height, top, bottom, outline, outline_width, outline2,
+           outline2_width, highlight, shadow, shadow_offset, lift, alpha)
+
+    def build():
+        s = ART_SUPERSAMPLE
+        big_w, big_h = width * s, height * s
+        radius = big_h // 2
+        pad = (outline_width + outline2_width + 2
+               + max(abs(shadow_offset[0]), abs(shadow_offset[1]))
+               + abs(lift))
+        canvas = pygame.Surface(((width + pad * 2) * s, (height + pad * 2) * s),
+                                pygame.SRCALPHA)
+        canvas.fill((0, 0, 0, 0))
+        origin = (pad * s, pad * s)
+        edge_shift = (0, lift * s)
+
+        def capsule(extra, shift=(0, 0)):
+            """半径多出 extra 像素的胶囊遮罩。"""
+            layer = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+            pygame.draw.rect(
+                layer, (255, 255, 255, 255),
+                pygame.Rect(origin[0] + shift[0] - extra * s,
+                            origin[1] + shift[1] - extra * s,
+                            big_w + extra * 2 * s, big_h + extra * 2 * s),
+                border_radius=radius + extra * s)
+            return layer
+
+        def tinted(mask, col):
+            img = mask.copy()
+            img.fill((*col, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            return img
+
+        if shadow:
+            canvas.blit(tinted(capsule(outline_width + outline2_width,
+                                       (shadow_offset[0] * s,
+                                        shadow_offset[1] * s)), shadow), (0, 0))
+        if outline2:
+            canvas.blit(tinted(capsule(outline_width + outline2_width,
+                                       edge_shift), outline2), (0, 0))
+        if outline:
+            canvas.blit(tinted(capsule(outline_width, edge_shift), outline),
+                        (0, 0))
+
+        # 字面：胶囊的 alpha 乘上竖向渐变
+        body = capsule(0)
+        grad = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+        grad.blit(vertical_gradient((big_w, big_h), top, bottom), origin)
+        body.blit(grad, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        canvas.blit(body, (0, 0))
+
+        if highlight:
+            # 上半截与胶囊求交，再叠一层浅色 —— 顶部那道反光
+            upper = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+            pygame.draw.rect(upper, (255, 255, 255, 255),
+                             pygame.Rect(origin[0], origin[1], big_w, big_h // 2),
+                             border_radius=radius)
+            upper.blit(body, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+            upper.fill((*highlight, 130), special_flags=pygame.BLEND_RGBA_MULT)
+            canvas.blit(upper, (0, 0))
+
+        if alpha < 255:
+            canvas.fill((255, 255, 255, alpha),
+                        special_flags=pygame.BLEND_RGBA_MULT)
+        return pygame.transform.smoothscale(
+            canvas, (width + pad * 2, height + pad * 2))
+
+    return _cached(key, build)
+
+
+def art_banner(font, pieces, gap=6, outline=None, outline_width=5,
+               outline2=None, outline2_width=2, highlight=None, shadow=None,
+               shadow_offset=(0, 6), lift=3, alpha=255):
+    """把若干「字符 / 横条」横着拼成整条艺术字标题。
+
+    ``pieces`` 里每一项是 dict：
+
+    * ``{"kind": "text", "text": "箭", "top": ..., "bottom": ...}``
+    * ``{"kind": "bar", "width": 96, "height": 30, "color": ...}``
+
+    两处对齐都要绕开「描边留白」这个坑：
+
+    * **横向**按每片的**墨迹边界**（``get_bounding_rect``）排布。每片四周都
+      留着描边用的透明边距，直接拿 surface 宽度累加的话，两片之间会凭空多出
+      ``2 × pad``（这里约 44 px）的空隙，字就散开了。
+    * **纵向**按整片叠放。描边参数在所有片上取同一份，而同一字体的每个汉字
+      渲染高度相同，所以各片等高，叠起来天然就是垂直居中对齐。
+    """
+    parts = []
+    for piece in pieces:
+        if piece.get("kind") == "bar":
+            image = art_bar(piece["width"], piece["height"], piece["color"],
+                            top=piece.get("top"), bottom=piece.get("bottom"),
+                            outline=outline, outline_width=outline_width,
+                            outline2=outline2, outline2_width=outline2_width,
+                            highlight=highlight, shadow=shadow,
+                            shadow_offset=shadow_offset, lift=lift, alpha=alpha)
+        else:
+            image = art_text(font, piece["text"], piece.get("top"),
+                             piece.get("bottom"),
+                             outline=outline, outline_width=outline_width,
+                             outline2=outline2, outline2_width=outline2_width,
+                             highlight=highlight, shadow=shadow,
+                             shadow_offset=shadow_offset, lift=lift, alpha=alpha)
+        parts.append(image)
+    if not parts:
+        return pygame.Surface((1, 1), pygame.SRCALPHA)
+    gap = max(0, int(gap))
+    inks = [part.get_bounding_rect() for part in parts]
+    width = sum(ink.width for ink in inks) + gap * (len(parts) - 1)
+    height = max(part.get_height() for part in parts)
+    canvas = pygame.Surface((max(1, width), max(1, height)), pygame.SRCALPHA)
+    x = 0
+    for part, ink in zip(parts, inks):
+        canvas.blit(part, (x - ink.left, height - part.get_height()))
+        x += ink.width + gap
+    return canvas
+
+
+def draw_art_banner(target, font, pieces, center, **kwargs):
+    """按中心画一整条拼装标题，返回它占的 rect。"""
+    image = art_banner(font, pieces, **kwargs)
     rect = image.get_rect(center=(int(center[0]), int(center[1])))
     target.blit(image, rect)
     return rect

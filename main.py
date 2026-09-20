@@ -181,6 +181,8 @@ class Game:
         self._update_view()
 
         self.font_title = pygame.font.SysFont(FONT_NAME, 54, bold=True)
+        # 开始页标题专用：比 font_title 大一号，几个元素拼起来才够气派
+        self.font_banner = pygame.font.SysFont(FONT_NAME, 74, bold=True)
         self.font_big = pygame.font.SysFont(FONT_NAME, 31, bold=True)
         self.font_num = pygame.font.SysFont(FONT_NAME, 34, bold=True)
         self.font_normal = pygame.font.SysFont(FONT_NAME, 23)
@@ -203,6 +205,9 @@ class Game:
         self.letter_levels = list(LETTER_LEVELS)
         self.levels = self.basic_levels
         self.track = "basic"
+        # 这一局是从哪一屏进来的 —— 顶栏靶心按钮据此决定退回哪里
+        # （随机关从开始页进，基础 / 字母关从各自的选关页进）
+        self.play_origin = GameState.START
         self.level_index = 0
         self.level_number = 1
         self.current_level = self.levels[0]
@@ -258,7 +263,8 @@ class Game:
                 "theme": self.on_theme_change,
                 "skip": self.skip_level,
                 "menu": self.open_menu,
-                "select": self.open_select,
+                # 顶栏靶心是「返回」：回进这一局之前的那一屏，不是固定的某一页
+                "select": self.leave_level,
                 "hint": self.use_hint,
                 "guide": self.toggle_guide,
                 "zoom": self.on_zoom_slider,
@@ -459,6 +465,7 @@ class Game:
     def start_game(self):
         """从基础玩法的第 1 关直接开一局。"""
         self.use_track("basic")
+        self.play_origin = GameState.BASIC_SELECT
         self.level_index = 0
         self.level_number = self.levels[0].get("id", 1)
         self._load_level(self.levels[0])
@@ -481,18 +488,20 @@ class Game:
 
     def open_basic_select(self):
         self.use_track("basic")
+        self.play_origin = GameState.BASIC_SELECT
         self.menu = None
         self._clear_effects()
         self.state = GameState.BASIC_SELECT
 
     def open_letter_select(self):
         self.use_track("letter")
+        self.play_origin = GameState.LETTER_SELECT
         self.menu = None
         self._clear_effects()
         self.state = GameState.LETTER_SELECT
 
     def open_select(self):
-        """顶栏靶心按钮与菜单里的「关卡选择」：进当前玩法对应的那一页。
+        """菜单里的「关卡选择」：进当前玩法对应的那一页。
 
         这里必须**按 self.track 现场分派**。原来顶栏那个按钮接的是
         ``open_level_select``（一个在类定义时就绑死到 open_basic_select 的别名），
@@ -503,9 +512,26 @@ class Game:
         else:
             self.open_basic_select()
 
+    def leave_level(self):
+        """顶栏靶心按钮（对局中那个圆圈）：回到**进这一局之前**的那一屏。
+
+        之前这里是「按 track 分派」的 ``open_select``：基础关回基础选关页、
+        字母关回字母选关页，**但随机关卡不属于任何一条线**，于是也被当成基础关
+        塞进了基础选关页 —— 玩家点它想回开始页，结果掉进一个自己从没进过的界面。
+        改成认「来路」之后，三条线各自回到玩家真正出发的地方。
+        """
+        origin = self.play_origin
+        if origin == GameState.BASIC_SELECT:
+            self.open_basic_select()
+        elif origin == GameState.LETTER_SELECT:
+            self.open_letter_select()
+        else:
+            self.back_home()
+
     def play_random(self):
         """随机玩法：现场生成一关开打（不进选关页，也不记进度）。"""
         self.use_track("basic")
+        self.play_origin = GameState.START
         self.menu = None
         self.new_random_level()
 
@@ -533,6 +559,7 @@ class Game:
     def back_home(self):
         self._clear_effects()
         self.menu = None
+        self.play_origin = GameState.START
         self.save.flush()
         self.state = GameState.START
 
@@ -1240,14 +1267,10 @@ class Game:
         cx = WINDOW_WIDTH // 2
 
         # 标题后面再压一团柔光：艺术字从背景里「亮」出来
-        paint.blit_glow(self.canvas, (cx, 248), 330, pal.glow, 76, 2.0)
-        paint.draw_art_text(
-            self.canvas, self.font_title, "一箭又一箭", (cx, 248),
-            top=pal.art_top, bottom=pal.art_bottom, outline=pal.art_outline,
-            outline_width=3, highlight=pal.art_gloss,
-            shadow=(14, 16, 34), shadow_offset=(0, 5))
+        paint.blit_glow(self.canvas, (cx, 228), 360, pal.glow, 78, 2.0)
+        self._draw_start_title((cx, 228))
         paint.text_shadow(self.canvas, self.font_normal, "ARROW AFTER ARROW",
-                          pal.text_dim, center=(cx, 322), shadow=(4, 8, 20),
+                          pal.text_dim, center=(cx, 334), shadow=(4, 8, 20),
                           alpha=90, offset=(0, 1))
 
         for button in self.start_buttons:
@@ -1259,6 +1282,50 @@ class Game:
                         self.font_small, pal.text_dim, center=(cx, 1082))
         self._draw_text("对局中：U 撤销 / H 提示 / A 自动求解 / G 辅助线 / Esc 菜单",
                         self.font_small, pal.text_dim, center=(cx, 1112))
+
+    def _start_title_pieces(self, pal):
+        """标题「一箭又一箭」拆成五片：两根横条 + 三个字。
+
+        前后两个「一」不写成汉字，直接画成红 / 蓝的圆头横杠（点题），末尾那个
+        「箭」换成绿色收尾 —— 于是整条标题有节奏，不再是一排同色的字。
+        """
+        _width, line_h = self.font_banner.size("箭")
+        face = (pal.art_top, pal.art_bottom)
+        bar = {
+            "kind": "bar", "width": int(line_h * 1.06),
+            "height": max(10, int(line_h * 0.30)),
+        }
+        return [
+            dict(bar, color=pal.art_bar_a),
+            {"kind": "text", "text": "箭", "top": face[0], "bottom": face[1]},
+            {"kind": "text", "text": "又", "top": face[0], "bottom": face[1]},
+            dict(bar, color=pal.art_bar_b),
+            {"kind": "text", "text": "箭", "top": pal.art_alt_top,
+             "bottom": pal.art_alt_bottom},
+        ]
+
+    def _start_title_image(self):
+        """开始页标题的贴图：拼装出来，自然宽度超了就整体等比缩回来。"""
+        pal = theme.get()
+        banner = paint.art_banner(
+            self.font_banner, self._start_title_pieces(pal), gap=6,
+            outline=pal.art_outline, outline_width=6,
+            outline2=pal.art_edge, outline2_width=3,
+            highlight=pal.art_gloss, shadow=(14, 16, 34),
+            shadow_offset=(0, 8), lift=3)
+        max_width = WINDOW_WIDTH - 56
+        if banner.get_width() > max_width:
+            ratio = max_width / banner.get_width()
+            banner = pygame.transform.smoothscale(
+                banner, (max_width, max(1, int(banner.get_height() * ratio))))
+        return banner
+
+    def _draw_start_title(self, center):
+        """按中心画拼装标题，返回它占的 rect。"""
+        banner = self._start_title_image()
+        rect = banner.get_rect(center=(int(center[0]), int(center[1])))
+        self.canvas.blit(banner, rect)
+        return rect
 
     def _cleared_count(self, levels):
         """一份关卡列表里已通关的关数。"""

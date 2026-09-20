@@ -329,12 +329,48 @@ def test_top_bar_target_button_returns_to_the_matching_select_page(game):
     assert game.levels is game.basic_levels
 
 
-def test_top_bar_target_button_from_a_random_level_goes_to_basic_select(game):
-    """随机关卡没有自己的选关页，靶心按钮回基础选关页。"""
+def test_top_bar_target_button_from_a_random_level_goes_home(game):
+    """随机关卡是从开始页进的，靶心按钮就该回开始页。
+
+    回归用例。之前这里是「按 track 分派」：随机关卡借用了 basic 这条线，
+    于是被当成基础关塞进基础选关页 —— 玩家点圆圈想回开始页，却掉进一个
+    自己从没进过的界面。现在按「来路」分派，三条线各回各的出发地。
+    """
     game.play_random()
     assert game.state == GameState.PLAYING
+    assert game.play_origin == GameState.START
+    game._dispatch_event(_click(game.hud.select_button.rect.center))
+    assert game.state == GameState.START
+
+
+def test_a_random_level_does_not_leak_its_origin_to_the_next_basic_level(game):
+    """玩过随机关之后再从基础选关页进关，靶心要回基础选关页而不是开始页。"""
+    game.play_random()
+    game._dispatch_event(_click(game.hud.select_button.rect.center))
+    assert game.state == GameState.START
+
+    game.open_basic_select()
+    game.select_level(2)
+    assert game.play_origin == GameState.BASIC_SELECT
     game._dispatch_event(_click(game.hud.select_button.rect.center))
     assert game.state == GameState.BASIC_SELECT
+
+
+def test_leaving_a_level_returns_to_where_the_player_came_from(game):
+    """三条进门路线各自回对的屏：基础 → 基础选关，字母 → 字母选关，随机 → 开始页。"""
+    game.open_basic_select()
+    game.select_level(0)
+    game.leave_level()
+    assert game.state == GameState.BASIC_SELECT
+
+    game.open_letter_select()
+    game.select_level(0)
+    game.leave_level()
+    assert game.state == GameState.LETTER_SELECT
+
+    game.play_random()
+    game.leave_level()
+    assert game.state == GameState.START
 
 
 def test_the_basic_only_alias_is_gone(game):
