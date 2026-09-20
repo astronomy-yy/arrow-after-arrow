@@ -54,11 +54,16 @@ python main.py
 
 ## 玩法与关卡
 
-- **入门玩法：3 个关卡**（关号 1 / 2 / 3），每支箭都是**单格箭**，整盘按「一串格子 +
-  一个方向」摆开，箭盖住棋盘**一半以上**（62% / 56% / 60%），红心和主线一样是 3 颗：
-  第 1 关每行一串朝右、从最右边一支一支往左点；第 2 关上半盘朝上、下半盘朝下；
-  第 3 关两侧竖列 + 四条横行纵横交叉。三关全部开放，不设解锁条件。通关顺序由
-  `game/solver.py` 的拓扑排序现算，摆成死局会在导入时直接报错。
+- **入门玩法：3 个关卡**（关号 1 / 2 / 3），每支箭都是**单格箭**，箭盖住棋盘
+  **一半以上**（62% / 56% / 60%），红心和主线一样是 3 颗。盘面由 `game/tutorial.py`
+  **随机散铺**出来（逆向构造，见下），**不是按图案码的整齐花样** —— 没有整行同向的
+  条带、没有 2×2 同向的小方块、四个方向都散得开，看着乱、拆起来有「谁挡着谁」的
+  层次。开局能直接飞的箭 37% → 31% → 23%，一关比一关要动脑。三关全部开放，不设
+  解锁条件。
+- **可解性由构造保证**：散铺时每支箭只守一条约束 —— 放它的时候，它箭头前方的射线上
+  不能有已经放好的箭。这正好等价于「按放箭顺序倒着点，每一步都飞得出去」，所以盘面
+  天生可通关，不会摆成死局；`game/solver.py` 的拓扑排序只用来独立复核，摆坏了在**导入时**
+  就直接报错。
 - **基础玩法：12 个关卡**，造型依次为方形、圆形、菱形、十字、心形、三角、沙漏、圆环等。
 - **字母玩法：26 个字母各一关**。先把 A–Z 的字模（`game/letters.py` 的 5×7 点阵）
   按 3 倍放大成棋盘遮罩，再用同一套逆向构造法往里铺线段 —— 于是每一关整盘就是
@@ -123,6 +128,7 @@ arrow-after-arrow/
 │   ├── generator.py           # 逆向构造法关卡生成器 + 通关校验 + 阻挡难度旋钮
 │   ├── level.py               # 基础玩法 12 关（由 tools/generate_levels.py 生成）
 │   ├── level_letters.py       # 字母玩法 26 关（由 tools/generate_letters.py 生成）
+│   ├── tutorial.py            # 入门玩法 3 关：单格箭随机散铺（手写，不在 level.py 里）
 │   ├── board.py               # 棋盘：占据网格、射线检测、撤销、重置
 │   ├── solver.py              # 拓扑排序求解器：提示 / 自动通关共用
 │   ├── animations.py          # 飞出滑行（沿折线取段）、残影、弹回摆动、提示呼吸
@@ -141,7 +147,7 @@ arrow-after-arrow/
 │                              #   缩放拖动 / 动效 / 线段渲染 / 界面观感 / 字母玩法 / 端到端
 ├── docs/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
-│   └── test-record.md         # T01–T13 测试记录
+│   └── test-record.md         # T01–T22 测试记录
 ├── assets/screenshots/        # 游戏截图
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
@@ -151,7 +157,7 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 368 个用例，无窗口运行
+python -m pytest -q                    # 370 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成基础玩法 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
@@ -172,7 +178,7 @@ python tools/perf_bench.py             # 打印各界面 × 日夜主题的整�
 |---|---|
 | ![入门选关](assets/screenshots/tutorial_select.png) | ![入门盘面](assets/screenshots/playing_tutorial1.png) |
 
-| 入门第 2 关（上半朝上、下半朝下） | 入门第 3 关（两侧竖列 + 四条横行，纵横交叉） |
+| 入门第 2 关（35 支散铺，四个方向都散得开） | 入门第 3 关（48 支，密度最高、开局可飞最少） |
 |---|---|
 | ![入门2](assets/screenshots/playing_tutorial2.png) | ![入门3](assets/screenshots/playing_tutorial3.png) |
 
