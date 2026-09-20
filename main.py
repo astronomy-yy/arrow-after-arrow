@@ -258,7 +258,7 @@ class Game:
                 "theme": self.on_theme_change,
                 "skip": self.skip_level,
                 "menu": self.open_menu,
-                "select": self.open_level_select,
+                "select": self.open_select,
                 "hint": self.use_hint,
                 "guide": self.toggle_guide,
                 "zoom": self.on_zoom_slider,
@@ -492,14 +492,16 @@ class Game:
         self.state = GameState.LETTER_SELECT
 
     def open_select(self):
-        """菜单里的「关卡选择」：进当前玩法对应的那一页。"""
+        """顶栏靶心按钮与菜单里的「关卡选择」：进当前玩法对应的那一页。
+
+        这里必须**按 self.track 现场分派**。原来顶栏那个按钮接的是
+        ``open_level_select``（一个在类定义时就绑死到 open_basic_select 的别名），
+        于是玩字母关时点它也会跳到基础选关页 —— 别名不再保留，避免重蹈覆辙。
+        """
         if self.track == "letter":
             self.open_letter_select()
         else:
             self.open_basic_select()
-
-    # 旧名字留着：菜单与测试都用惯了
-    open_level_select = open_basic_select
 
     def play_random(self):
         """随机玩法：现场生成一关开打（不进选关页，也不记进度）。"""

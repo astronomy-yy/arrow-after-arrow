@@ -292,6 +292,48 @@ def test_menu_jumps_to_the_matching_select_page(game):
     assert game.state == GameState.BASIC_SELECT
 
 
+def test_top_bar_target_button_returns_to_the_matching_select_page(game):
+    """顶栏那枚靶心（圆圈）按钮：点一下要回到**当前玩法**的选关页。
+
+    回归用例。这枚按钮原来接的是 ``open_level_select`` —— 一个在类定义时就
+    绑死到 ``open_basic_select`` 的别名，于是玩字母关时点它也会掉进基础选关页。
+    这里走完整链路（点击 → HUD → IconButton → 回调），不只测那个方法。
+    """
+    button = game.hud.select_button
+
+    game.open_letter_select()
+    game.select_level(letters.LETTERS.index("M"))
+    assert game.state == GameState.PLAYING
+    game._dispatch_event(_click(button.rect.center))
+    assert game.state == GameState.LETTER_SELECT
+    assert game.track == "letter"
+    assert game.levels is game.letter_levels
+
+    game.open_basic_select()
+    game.select_level(2)
+    game._dispatch_event(_click(button.rect.center))
+    assert game.state == GameState.BASIC_SELECT
+    assert game.track == "basic"
+    assert game.levels is game.basic_levels
+
+
+def test_top_bar_target_button_from_a_random_level_goes_to_basic_select(game):
+    """随机关卡没有自己的选关页，靶心按钮回基础选关页。"""
+    game.play_random()
+    assert game.state == GameState.PLAYING
+    game._dispatch_event(_click(game.hud.select_button.rect.center))
+    assert game.state == GameState.BASIC_SELECT
+
+
+def test_the_basic_only_alias_is_gone(game):
+    """``open_level_select`` 这个别名本身就是那个 bug 的来源，不该再存在。
+
+    它是在类定义时求值的，永远指向 open_basic_select；只要有人再拿它去接
+    按钮，就会重新长出「玩字母关却跳基础选关」的毛病。
+    """
+    assert not hasattr(main.Game, "open_level_select")
+
+
 # --------------------------------------------------------------------------
 # 4. 规则页内容
 # --------------------------------------------------------------------------
