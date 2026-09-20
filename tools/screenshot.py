@@ -135,6 +135,11 @@ def main():
     if theme.get().name != "day":
         game.toggle_theme()
     game.menu = None
+
+    # 日间的开始页：贴纸标题有一层浅色外圈，浅底上最容易出问题，先出一张
+    game.back_home()
+    shoot(game, "start_day.png")
+
     game.level_index = 2
     game._load_level(game.levels[2])
     game.state = GameState.PLAYING
