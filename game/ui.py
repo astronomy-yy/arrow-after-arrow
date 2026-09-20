@@ -28,8 +28,9 @@ def _scale(color, ratio):
 class Button:
     """一个矩形圆角文字按钮。
 
-    kind="primary" 是实心主按钮（蓝紫渐变），kind="ghost" 是浅色次按钮
-    （跟卡片同色，只留一圈描边）—— 同一屏里两个按钮才不会抢眼。
+    kind="primary" 是实心主按钮（蓝色渐变 + 白字），kind="ghost" 是**浅色
+    纸片**（浅底 + 深字）—— 同一屏里两个按钮才不会抢眼，深浅交替也让一整列
+    按钮有节奏。夜间的纸片不是纯白而是浅蓝白：深色底上纯白会亮得晃眼。
     """
 
     def __init__(self, center, size, text, callback, font,
@@ -54,10 +55,10 @@ class Button:
     def _colors(self):
         pal = theme.get()
         ghost = self.kind == "ghost"
-        top = self.base_color or (pal.card_top if ghost else pal.btn_top)
-        bottom = pal.card_bottom if ghost else pal.btn_bottom
-        line = pal.surface_line if ghost else pal.btn_line
-        text = self.text_color or (pal.text if ghost else pal.btn_text)
+        top = self.base_color or (pal.ghost_top if ghost else pal.btn_top)
+        bottom = pal.ghost_bottom if ghost else pal.btn_bottom
+        line = pal.ghost_line if ghost else pal.btn_line
+        text = self.text_color or (pal.ghost_text if ghost else pal.btn_text)
         return top, bottom, line, text
 
     def _style(self):
@@ -99,10 +100,13 @@ class Button:
             surface, rect, self.radius,
             fill_top=top, fill_bottom=bottom, border=line, border_width=2,
             sheen=None if self.kind == "ghost" else pal.sheen, shadow=shadow)
+        # 浅色纸片上写的是深色字，再垫一层深投影只会把笔画糊掉 —— 直接实心画
+        ghost = self.kind == "ghost"
+        text_alpha = 0 if ghost else 90
         if self.icon is None:
             paint.text_shadow(surface, self.font, self.text, text_color,
-                              center=rect.center, shadow=(4, 8, 20), alpha=90,
-                              offset=(0, 1))
+                              center=rect.center, shadow=(4, 8, 20),
+                              alpha=text_alpha, offset=(0, 1))
             return
         # 有图标时「图标 + 文字」整体居中，图标左、文字右
         label = self.font.render(self.text, True, text_color)
@@ -116,7 +120,7 @@ class Button:
             surface, self.font, self.text, text_color,
             center=(left + icon_size + gap + label.get_width() / 2.0,
                     rect.centery),
-            shadow=(4, 8, 20), alpha=90, offset=(0, 1))
+            shadow=(4, 8, 20), alpha=text_alpha, offset=(0, 1))
 
 
 class IconButton:

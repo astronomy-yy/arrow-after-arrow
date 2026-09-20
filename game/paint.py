@@ -111,6 +111,37 @@ def blit_glow(surface, center, radius, color, alpha=70, softness=1.8):
                         int(center[1]) - glow.get_height() // 2))
 
 
+def fog_layer(size, blobs):
+    """把一组柔雾预合成成一张整屏贴图。
+
+    每团柔光自己已经是缓存贴图了，但逐团贴仍是「四张 800+ 见方的半透明
+    图」逐帧混合，一页就是 4 ms 上下。雾是**不动的**，所以干脆先合成成一张
+    （结果完全一样：叠加顺序不变），之后每帧只剩一次 blit。
+
+    `blobs` 每项是 (x 比例, y 比例, 半径, 颜色, alpha)。
+    """
+    width, height = max(1, int(size[0])), max(1, int(size[1]))
+    key = ("fog", width, height,
+           tuple((round(fx, 4), round(fy, 4), int(radius), rgb(color),
+                  int(alpha)) for fx, fy, radius, color, alpha in blobs))
+
+    def build():
+        layer = pygame.Surface((width, height), pygame.SRCALPHA)
+        layer.fill((0, 0, 0, 0))
+        for fx, fy, radius, color, alpha in blobs:
+            glow = radial_glow(radius, color, alpha)
+            layer.blit(glow, (int(width * fx) - glow.get_width() // 2,
+                              int(height * fy) - glow.get_height() // 2))
+        return layer
+
+    return _cached(key, build)
+
+
+def blit_fog(surface, size, blobs):
+    """铺一整层预合成好的柔雾。"""
+    surface.blit(fog_layer(size, blobs), (0, 0))
+
+
 # --------------------------------------------------------------------------
 # 投影
 # --------------------------------------------------------------------------
@@ -301,6 +332,112 @@ def text_shadow(target, font, text, color, center=None, topleft=None,
                            rect.top + int(offset[1])))
     target.blit(image, rect)
     return rect
+
+
+_OPEN_BRACKETS = "（【《「‘“"
+_CLOSE_BRACKETS = "）】》」’”"
+
+
+def _word_tokens(text):
+    """把一段文字切成「不该被拆开」的最小单元。
+
+    两类单元额外照顾：
+
+    - 连续的 ASCII（英文 / 数字 / 半角符号）算一个，"第 12 关" 因此不会折成
+      "第 1" 和 "2 关"；
+    - 一对全角括号连同里面的内容算一个，"缩放棋盘（也可用 - 与 =）" 会整段
+      挪到下一行，而不是断在「（也」中间。
+    """
+    tokens, buffer, depth = [], "", 0
+    for char in text:
+        if depth == 0 and char in _OPEN_BRACKETS:
+            if buffer:
+                tokens.append(buffer)
+                buffer = ""
+            depth, buffer = 1, char
+            continue
+        if depth:
+            buffer += char
+            if char in _CLOSE_BRACKETS:
+                depth = 0
+                tokens.append(buffer)
+                buffer = ""
+            continue
+        if char.isascii() and not char.isspace():
+            buffer += char
+            continue
+        if buffer:
+            tokens.append(buffer)
+            buffer = ""
+        tokens.append(char)
+    if buffer:
+        tokens.append(buffer)
+    return tokens
+
+
+# 中文排版的「避头尾」：这几个收尾标点不许出现在行首。
+# ASCII 的 , . ; : ! ? 由 _word_tokens 归进前一个英文词里，不会单独落到行首。
+_NO_LINE_START = "，。、；：？！）】》」』”’…·"
+
+
+def _fix_punctuation(lines):
+    """把落到行首的收尾标点退回上一行末尾。
+
+    中文可以逐字断行，但标点跟着下一个字跑到行首会显得很脏。退一个字符即可，
+    行数不变（上一行只可能少一个字，仍然非空）。
+    """
+    for index in range(1, len(lines)):
+        if lines[index] and lines[index][0] in _NO_LINE_START:
+            previous = lines[index - 1]
+            if len(previous) > 1:
+                lines[index] = previous[-1] + lines[index]
+                lines[index - 1] = previous[:-1]
+    return lines
+
+
+def _greedy_lines(tokens, font, width):
+    """贪心折行：一行里尽量多塞，塞不下就断。"""
+    lines, line = [], ""
+    for token in tokens:
+        if line and font.size(line + token)[0] > width:
+            lines.append(line)
+            line = token
+        else:
+            line += token
+    lines.append(line)
+    return lines
+
+
+def wrap_text(font, text, max_width, balance=True):
+    """按像素宽度折行，返回行列表（至少一行）。
+
+    中文没有词边界，逐字符试探是最省事也最准的办法：一行里多塞一个单元，
+    宽了就断。`max_width` 窄到放不下单个单元时，那个单元自己独占一行 ——
+    宁可这一行溢出一点，也不要把一个词从中间劈开。
+
+    `balance=True` 会在**不增加行数**的前提下把各行宽度摊匀：中文句子常常只
+    比容器宽一点点，纯贪心会折出「满满一行 + 两三个字的尾巴」，很难看。做法
+    是二分一个更窄的有效宽度，取「仍折得出同样行数」的最小值 —— 行数没变，
+    余量却均摊到了每一行。
+    """
+    max_width = max(1, int(max_width))
+    result = []
+    for paragraph in str(text).split("\n"):
+        tokens = _word_tokens(paragraph)
+        lines = _greedy_lines(tokens, font, max_width)
+        if balance and len(lines) > 1:
+            widest = max(font.size(token)[0] for token in tokens)
+            low, high = max(1, widest), max_width
+            while low <= high:
+                mid = (low + high) // 2
+                candidate = _greedy_lines(tokens, font, mid)
+                if len(candidate) <= len(lines):
+                    lines = candidate
+                    high = mid - 1
+                else:
+                    low = mid + 1
+        result.extend(_fix_punctuation(lines))
+    return result
 
 
 # --------------------------------------------------------------------------

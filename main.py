@@ -85,6 +85,14 @@ AUTO_STEP_INTERVAL = 0.30       # AI 自动求解时每隔多久点一支箭
 MAX_FRAME_DT = 0.05         # 单帧步进上限：卡一下也不让飞行线「瞬移」
 STAR_TABLE = {0: 3, 1: 2, 2: 2}
 
+# 规则页「怎么玩」的正文。三句话各自按卡片宽度自动折行 —— 写死坐标的话，
+# 句子一长文字就会顶出卡片右边（而且不会有任何报错）。
+HOW_TO_PLAY = (
+    "点击彩色线段，它会沿着自己的轨迹滑出、再从箭头方向飞出",
+    "箭头方向上有别的线段挡着，就会被弹回来，消耗一颗红心",
+    "清空本关全部线段即通关；红心耗尽或倒计时归零则失败",
+)
+
 # 规则页的按键功能表（左列、右列）。改按键就改这里，界面与测试都跟着走。
 # 注意：随机关卡已经挪到开始页的入口按钮上，不再占用字母键。
 KEY_HINTS = (
@@ -94,6 +102,17 @@ KEY_HINTS = (
     (("G", "显示 / 隐藏辅助线"), ("0", "复位缩放与位置")),
     (("Esc", "打开菜单 / 返回上一级"), None),
 )
+
+# 规则页的版式：每块面板的高度由内容决定，位置依次往下累加（见 _rules_layout）。
+RULES_TOP = 150                 # 第一块面板的顶边
+RULES_MARGIN = 26               # 面板内的左右留白
+RULES_GAP = 16                  # 面板之间
+RULES_LINE_H = 32               # 「怎么玩」正文行高
+RULES_PARA_GAP = 8              # 「怎么玩」三句话之间的额外间距
+RULES_KEY_ROW_H = 46            # 按键功能表行距
+RULES_KEY_COL_W = 286           # 按键功能表的列宽（左列起点 → 右列起点）
+RULES_KEYS_PAD_TOP = 70         # 按键功能表：面板顶边到第一行
+RULES_MODES_H = 196             # 三种玩法面板高度（内容是固定的三行）
 
 # 开始页四个入口的按钮中心 y（标题在 248、副标题在 322）
 START_BUTTON_Y = (470, 566, 662, 758)
@@ -251,6 +270,7 @@ class Game:
         self.board_pixel_w = self.board_pixel_h = 0
         self._compute_geometry()
 
+        self.rules_layout = None       # 规则页版式，首次用到时算一次（见 _rules_layout）
         self._build_widgets()
 
     # ---------------- 控件 ----------------
@@ -291,9 +311,9 @@ class Game:
                                     kind="ghost", icon=icons.dice)
         self.start_buttons = (self.rules_button, self.basic_button,
                               self.letter_button, self.random_button)
-        self.rules_home_button = Button((cx, 1042), (216, 60), "返回",
-                                        self.close_rules, self.font_normal,
-                                        kind="ghost")
+        self.rules_home_button = Button((cx, self._rules_layout()["home_y"]),
+                                        (216, 60), "返回", self.close_rules,
+                                        self.font_normal, kind="ghost")
         self.next_button = Button((cx - 128, 672), (200, 56), "下一关",
                                   self.next_level, self.font_normal)
         self.retry_button = Button((cx - 128, 672), (216, 56), "重新开始",
@@ -1208,16 +1228,23 @@ class Game:
         return rect
 
     def _draw_background(self):
-        """整页底：竖向渐变 + 一团柔光，视线自然被拉到画面中间。"""
+        """整页底：竖向渐变 + 几团错开的柔雾，视线自然被拉到画面中间。
+
+        非对局界面额外铺一组低透明度的彩色柔雾（`Palette.fog`），底子不再是
+        一条从亮到暗的平涂，而是有远近的雾面。**对局中不铺** —— 雾会压住
+        棋盘的可读性，盘面本身已经是整屏的彩色线段了。
+        """
         pal = theme.get()
         self.canvas.blit(paint.vertical_gradient(
             (WINDOW_WIDTH, WINDOW_HEIGHT), pal.bg_top, pal.bg_bottom), (0, 0))
         if self.state in (GameState.PLAYING, GameState.LEVEL_CLEAR,
                           GameState.GAME_OVER, GameState.ALL_CLEAR):
-            center = self._view_center()
-        else:
-            center = (WINDOW_WIDTH // 2, 520)
-        paint.blit_glow(self.canvas, center, 430, pal.glow, 62, 2.3)
+            paint.blit_glow(self.canvas, self._view_center(), 430, pal.glow,
+                            62, 2.3)
+            return
+        paint.blit_fog(self.canvas, (WINDOW_WIDTH, WINDOW_HEIGHT), pal.fog)
+        paint.blit_glow(self.canvas, (WINDOW_WIDTH // 2, 520), 430, pal.glow,
+                        62, 2.3)
 
     def _draw_board(self):
         pal = theme.get()
@@ -1380,47 +1407,98 @@ class Game:
                         self.font_small, pal.text_dim,
                         center=(cx, card.bottom - 30))
 
+    def _rules_layout(self):
+        """规则页的版式（算一次就缓存）。
+
+        `_draw_rules` 每帧都要用它，而折行要逐行做 `font.size` 度量，每帧重算
+        不划算；文案、字体都不会在运行中变，算一次即可。
+        """
+        if self.rules_layout is None:
+            self.rules_layout = self._compute_rules_layout()
+        return self.rules_layout
+
+    def _compute_rules_layout(self):
+        """每块面板的高度**由内容算出来**，下一块接着往下排。
+
+        原来三块面板的 y 与高度都是写死的数字，正文一长就会顶出卡片右边 ——
+        卡片宽度不变、文字又不会折行，而且这种溢出不会有任何报错，只能靠
+        肉眼发现。改成按内容累加之后，往文案里再加一句话也不会溢出。
+        """
+        left = 24
+        width = WINDOW_WIDTH - left * 2
+        inner = width - RULES_MARGIN * 2
+        how_lines, how_tops = [], []
+        offset = 60                       # 面板顶边 → 正文第一行
+        for sentence in HOW_TO_PLAY:
+            if how_lines:
+                offset += RULES_PARA_GAP  # 三句话之间留一点，不然六行糊成一段
+            for line in paint.wrap_text(self.font_normal, sentence, inner):
+                how_lines.append(line)
+                how_tops.append(offset)
+                offset += RULES_LINE_H
+
+        y = RULES_TOP
+        how = pygame.Rect(left, y, width, offset + 14)
+        y = how.bottom + RULES_GAP
+        keys = pygame.Rect(
+            left, y, width,
+            RULES_KEYS_PAD_TOP + 6 + (len(KEY_HINTS) - 1) * RULES_KEY_ROW_H + 32)
+        y = keys.bottom + RULES_GAP
+        modes = pygame.Rect(left, y, width, RULES_MODES_H)
+        y = modes.bottom + 34
+        return {
+            "how": how,
+            "how_lines": how_lines,
+            "how_tops": how_tops,
+            "keys": keys,
+            "modes": modes,
+            "note_y": y,
+            "home_y": y + 54,
+            "esc_y": y + 106,
+        }
+
     def _draw_rules(self):
         """规则介绍：玩法说明 + 按键功能表 + 三种玩法。"""
         pal = theme.get()
         cx = WINDOW_WIDTH // 2
+        layout = self._rules_layout()
         paint.blit_glow(self.canvas, (cx, 100), 260, pal.glow, 58, 2.0)
         paint.text_shadow(self.canvas, self.font_title, "玩法规则", pal.text,
                           center=(cx, 100), shadow=(6, 12, 30), alpha=130,
                           offset=(0, 3))
 
         # ---- 怎么玩 ----
-        how = pygame.Rect(24, 150, WINDOW_WIDTH - 48, 202)
+        how = layout["how"]
         paint.draw_panel(self.canvas, how, 22)
         self._draw_text("怎么玩", self.font_big, pal.text_gold,
-                        topleft=(how.left + 26, how.top + 18))
-        rules = [
-            "点击彩色线段，它会沿着自己的轨迹滑出、再从箭头方向飞出",
-            "箭头方向上有别的线段挡着，就会被弹回来，消耗一颗红心",
-            "清空本关全部线段即通关；红心耗尽或倒计时归零则失败",
-        ]
-        for index, line in enumerate(rules):
+                        topleft=(how.left + RULES_MARGIN, how.top + 18))
+        for line, top in zip(layout["how_lines"], layout["how_tops"]):
             self._draw_text(line, self.font_normal, pal.text_dim,
-                            topleft=(how.left + 26, how.top + 70 + index * 42))
+                            topleft=(how.left + RULES_MARGIN, how.top + top))
 
         # ---- 按键功能表（两列）----
-        keys = pygame.Rect(24, 370, WINDOW_WIDTH - 48, 336)
+        keys = layout["keys"]
         paint.draw_panel(self.canvas, keys, 22)
         self._draw_text("按键功能", self.font_big, pal.text_gold,
-                        topleft=(keys.left + 26, keys.top + 18))
+                        topleft=(keys.left + RULES_MARGIN, keys.top + 18))
         for row_index, row in enumerate(KEY_HINTS):
             for col_index, item in enumerate(row):
                 if item is None:
                     continue
-                self._draw_key_hint(keys.left + 26 + col_index * 286,
-                                    keys.top + 76 + row_index * 50,
-                                    item[0], item[1])
+                x = keys.left + RULES_MARGIN + col_index * RULES_KEY_COL_W
+                # 右列不许越过面板内边距，说明文字按这个余量折行
+                avail = min(RULES_KEY_COL_W,
+                            keys.right - RULES_MARGIN - x)
+                self._draw_key_hint(
+                    x,
+                    keys.top + RULES_KEYS_PAD_TOP + row_index * RULES_KEY_ROW_H,
+                    item[0], item[1], avail)
 
         # ---- 三种玩法 ----
-        modes = pygame.Rect(24, 726, WINDOW_WIDTH - 48, 196)
+        modes = layout["modes"]
         paint.draw_panel(self.canvas, modes, 22)
         self._draw_text("三种玩法", self.font_big, pal.text_gold,
-                        topleft=(modes.left + 26, modes.top + 18))
+                        topleft=(modes.left + RULES_MARGIN, modes.top + 18))
         lines = (
             (icons.play, "基础玩法", "12 关，从小盘到大盘，难度一路递增"),
             (icons.letter_a, "字母玩法", "26 个字母各一关，整盘铺成一个字母"),
@@ -1435,13 +1513,14 @@ class Game:
                             topleft=(modes.left + 176, y - 10))
 
         self._draw_text("以上玩法都从开始页的按钮进入", self.font_small,
-                        pal.text_dim, center=(cx, 956))
+                        pal.text_dim, center=(cx, layout["note_y"]))
+        self.rules_home_button.rect.center = (cx, layout["home_y"])
         self.rules_home_button.draw(self.canvas)
         self._draw_text("Esc 也可以直接返回", self.font_small, pal.text_dim,
-                        center=(cx, 1086))
+                        center=(cx, layout["esc_y"]))
 
-    def _draw_key_hint(self, x, y, key, label):
-        """一个按键胶囊 + 右侧说明。"""
+    def _draw_key_hint(self, x, y, key, label, width=RULES_KEY_COL_W):
+        """一个按键胶囊 + 右侧说明；说明超宽就折成两行，不往下一行挤。"""
         pal = theme.get()
         capsule = pygame.Rect(x, y - 16, 62, 32)
         paint.draw_card(self.canvas, capsule, 9, fill_top=pal.card_top,
@@ -1449,8 +1528,13 @@ class Game:
                         border_width=1)
         self._draw_text(key, self.font_small, pal.text_gold,
                         center=capsule.center)
-        self._draw_text(label, self.font_small, pal.text_dim,
-                        topleft=(capsule.right + 12, y - 10))
+        lines = paint.wrap_text(self.font_small, label,
+                                max(24, width - (capsule.width + 12)))
+        # 折成两行时整体上移半行，跟左侧胶囊在视觉上仍然对齐
+        top = y - 10 - (len(lines) - 1) * 11
+        for index, line in enumerate(lines):
+            self._draw_text(line, self.font_small, pal.text_dim,
+                            topleft=(capsule.right + 12, top + index * 22))
 
     def _level_rects(self):
         return self._grid_rects(len(self.levels), cols=4, size=124, gap=24,

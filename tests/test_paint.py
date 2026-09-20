@@ -302,19 +302,40 @@ def test_pressed_button_sinks_and_drops_its_shadow():
     assert bottom > top
 
 
-def test_ghost_button_is_quieter_than_the_primary_one():
+def test_ghost_button_is_a_light_slip_next_to_the_blue_primary():
+    """次要按钮是浅色纸片（浅底 + 深字），主按钮是蓝色实心（白字）。
+
+    这一对的区分不再是「谁更暗」，而是**深浅整个反过来**：纸片比蓝底亮得多、
+    字比蓝底上的字深得多 —— 一整列按钮因此是「蓝 / 白 / 蓝 / 白」的节奏。
+    """
     font = pygame.font.Font(None, 32)
     theme.set_theme("night")
-    pal = theme.get()
-    primary = _button_image(
-        Button((130, 50), (180, 56), "开始游戏", None, font), False, False)
-    ghost = _button_image(
-        Button((130, 50), (180, 56), "关卡选择", None, font,
-               kind="ghost"), False, False)
-    at_primary = primary.get_at((130, 50))[:3]
-    at_ghost = ghost.get_at((130, 50))[:3]
-    assert at_primary == pal.btn_bottom or at_primary[2] > at_ghost[2] + 40
-    assert at_ghost[2] < pal.btn_top[2]
+    primary_button = Button((130, 50), (180, 56), "开始游戏", None, font)
+    ghost_button = Button((130, 50), (180, 56), "关卡选择", None, font,
+                          kind="ghost")
+    primary = _button_image(primary_button, False, False)
+    ghost = _button_image(ghost_button, False, False)
+
+    # 取靠左内侧的一点：中心会被文字盖住，这里一定是填充色
+    spot = (primary_button.rect.left + 10, primary_button.rect.centery)
+    fill_primary = primary.get_at(spot)[:3]
+    fill_ghost = ghost.get_at(spot)[:3]
+    assert sum(fill_ghost) > sum(fill_primary) + 120, (fill_primary, fill_ghost)
+    assert fill_primary[2] > fill_primary[0] + 60        # 主按钮是明显的蓝
+    assert fill_ghost[2] <= fill_ghost[0] + 40           # 纸片接近中性的浅蓝白
+
+    # 只看按钮本体、且躲开圆角（圆角外是测试底板的深色，会污染「最暗」）
+    inner = primary_button.rect.inflate(-40, -40)
+
+    def darkest(surface):
+        """按钮**内部**最暗的像素 —— 也就是文字的颜色。"""
+        return min(sum(surface.get_at((x, y))[:3])
+                   for y in range(inner.top, inner.bottom)
+                   for x in range(inner.left, inner.right))
+
+    # 纸片上写的是深字，蓝底上写的是白字
+    assert darkest(ghost) < darkest(primary) - 100, \
+        (darkest(ghost), darkest(primary))
 
 
 # ---------------- 8. 主题字段 ----------------
@@ -325,12 +346,20 @@ def test_both_themes_define_every_new_field():
         for field in ("bg_top", "bg_bottom", "glow", "surface", "surface_line",
                       "board_top", "board_bottom", "board_line", "card_top",
                       "card_bottom", "card_line", "sheen", "btn_top",
-                      "btn_bottom", "btn_line", "btn_text", "accent"):
+                      "btn_bottom", "btn_line", "btn_text", "ghost_top",
+                      "ghost_bottom", "ghost_line", "ghost_text", "accent"):
             color = getattr(pal, field)
             assert len(color) == 3, (name, field, color)
             assert all(0 <= c <= 255 for c in color), (name, field, color)
         spread, alpha, color, dy = pal.card_shadow
         assert spread > 0 and 0 < alpha <= 255 and len(color) == 3 and dy >= 0
+        # 柔雾：(x 比例, y 比例, 半径, 颜色, alpha)，位置要在画面内
+        assert len(pal.fog) >= 3, (name, pal.fog)
+        for fx, fy, radius, color, alpha in pal.fog:
+            assert 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0, (name, fx, fy)
+            assert radius > 100 and len(color) == 3 and 0 < alpha < 255
+        # 纸片是「浅底深字」：底比字亮，否则在深色底上会跟主按钮反过来
+        assert sum(pal.ghost_top) > sum(pal.ghost_text), name
     theme.set_theme("night")
 
 
@@ -582,6 +611,132 @@ def test_redraw_is_not_pathologically_slow(game):
         game._draw()
     per_frame = (time.perf_counter() - start) / frames
     assert per_frame < 0.04, "%.1f ms/帧" % (per_frame * 1000)
+
+
+# ---------------- 10. 折行与规则页排版 ----------------
+
+def body_font(size=23):
+    if not pygame.font.get_init():
+        pygame.font.init()
+    return pygame.font.SysFont("microsoftyahei,simhei,arial", size)
+
+
+def test_wrap_text_never_exceeds_the_limit():
+    """折行的硬约束：每一行都不许超出给定宽度。"""
+    font = body_font()
+    text = "点击彩色线段，它会沿着自己的轨迹滑出、再从箭头方向飞出"
+    for width in (200, 300, 540, 1200):
+        lines = paint.wrap_text(font, text, width)
+        assert "".join(lines).replace("\n", "") == text      # 一个字不丢
+        for line in lines:
+            assert font.size(line)[0] <= width, (width, line)
+
+
+def test_wrap_text_balances_the_lines():
+    """「满满一行 + 两三个字的尾巴」最难看：余量要摊到每一行。"""
+    font = body_font()
+    text = "清空本关全部线段即通关；红心耗尽或倒计时归零则失败"
+    lines = paint.wrap_text(font, text, 540)
+    assert len(lines) == 2, lines
+    widths = [font.size(line)[0] for line in lines]
+    # 纯贪心是 529 + 46；均衡之后两行应当差不多长
+    assert min(widths) > max(widths) * 0.75, widths
+
+
+def test_wrap_text_keeps_punctuation_off_the_line_start():
+    """中文排版的老规矩：收尾标点不许落在行首。"""
+    font = body_font()
+    text = "点击彩色线段，它会沿着自己的轨迹滑出、再从箭头方向飞出"
+    for line in paint.wrap_text(font, text, 540)[1:]:
+        assert line[0] not in "，。、；：？！）】》」』", line
+
+
+def test_wrap_text_keeps_brackets_whole():
+    """括号连同里面的内容算一个单元，不会断在「（也」中间。"""
+    font = body_font(18)
+    assert paint.wrap_text(font, "缩放棋盘（也可用 - 与 =）", 200) == \
+        ["缩放棋盘", "（也可用 - 与 =）"]
+    # 放得下就该是一行，别没事找事地折
+    assert paint.wrap_text(font, "显示 / 隐藏辅助线", 200) == ["显示 / 隐藏辅助线"]
+
+
+def test_rules_page_text_stays_inside_its_panels(game):
+    """规则页的文字一律不许顶出卡片右边。
+
+    原来的写法把每句话写死成一行、坐标也是写死的，句子比卡片宽就直接画到
+    卡片外面去 —— 不报错、不抛异常，只能靠肉眼发现（玩家就是这么发现的）。
+    所以这里量的是**文字的实际渲染宽度**，而不是「有没有调用过折行」。
+    """
+    import main
+    game.state = GameState.RULES
+    layout = game._rules_layout()
+    pad = main.RULES_MARGIN
+
+    inner = layout["how"].width - pad * 2
+    assert layout["how_lines"], "规则正文折行结果不该是空的"
+    for line in layout["how_lines"]:
+        assert game.font_normal.size(line)[0] <= inner, line
+
+    keys = layout["keys"]
+    for row_index, row in enumerate(main.KEY_HINTS):
+        for col_index, item in enumerate(row):
+            if item is None:
+                continue
+            left = pad + col_index * main.RULES_KEY_COL_W
+            avail = min(main.RULES_KEY_COL_W, keys.width - pad - left) - 74
+            for line in paint.wrap_text(game.font_small, item[1], avail):
+                assert game.font_small.size(line)[0] <= avail, (item, line)
+
+
+def test_rules_panels_stack_without_overlapping(game):
+    """三块面板依次往下排、互不重叠，返回按钮落在最后一块下面。"""
+    import main
+    game.state = GameState.RULES
+    layout = game._rules_layout()
+    how, keys, modes = layout["how"], layout["keys"], layout["modes"]
+    assert how.bottom < keys.top < keys.bottom < modes.top
+    assert keys.top - how.bottom == main.RULES_GAP
+    # 面板要留在画面内，按钮与底部提示也要
+    assert modes.bottom < layout["note_y"] < layout["home_y"] < layout["esc_y"]
+    assert layout["esc_y"] < main.WINDOW_HEIGHT
+    # 按钮位置必须和版式一致（它是在 _build_widgets 里按版式摆的）
+    assert game.rules_home_button.rect.centery == layout["home_y"]
+
+
+def test_rules_layout_is_computed_once(game):
+    """版式每帧都要用，但折行要逐行量文字宽度 —— 不许每帧重算。"""
+    game.state = GameState.RULES
+    first = game._rules_layout()
+    assert game._rules_layout() is first
+
+
+def test_menus_get_fog_but_the_board_does_not(game):
+    """非对局界面铺柔雾，对局中不铺 —— 雾会压住棋盘的可读性。"""
+    import main
+    for name in ("night", "day"):
+        theme.set_theme(name)
+        pal = theme.get()
+        fx, fy, _radius, _color, _alpha = pal.fog[0]
+        point = (int(main.WINDOW_WIDTH * fx), int(main.WINDOW_HEIGHT * fy))
+
+        plain = pygame.Surface((main.WINDOW_WIDTH, main.WINDOW_HEIGHT))
+        plain.blit(paint.vertical_gradient(plain.get_size(), pal.bg_top,
+                                           pal.bg_bottom), (0, 0))
+        before = sum(plain.get_at(point)[:3])
+
+        def background_at(state):
+            game.state = state
+            game.canvas.fill((0, 0, 0))
+            game._draw_background()
+            return sum(game.canvas.get_at(point)[:3])
+
+        menu = background_at(GameState.START)
+        board = background_at(GameState.PLAYING)
+        # 菜单上雾确实改了颜色（夜间提亮、日间压暗，所以只看变化量）
+        assert abs(menu - before) > 12, (name, before, menu)
+        # 对局中那一点就是纯渐变 —— 雾是一层都没有铺
+        assert abs(board - before) <= 2, (name, before, board)
+    theme.set_theme("night")
 
 
 def test_menu_panel_still_returns_the_click(game):
