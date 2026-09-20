@@ -16,7 +16,7 @@ import sys
 
 import pygame
 
-from game import audio, icons, theme
+from game import audio, icons, paint, theme
 from game.animations import (
     TOAST_DURATION,
     BlockedFeedback,
@@ -243,18 +243,19 @@ class Game:
 
         self.hud.zoom_slider.value = (1.0 - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)
 
-        self.start_button = Button((cx, 720), (240, 66), "开始游戏",
+        self.start_button = Button((cx, 750), (240, 66), "开始游戏",
                                    self.start_game, self.font_big)
-        self.select_from_start = Button((cx, 810), (240, 54), "关卡选择",
+        self.select_from_start = Button((cx, 838), (240, 54), "关卡选择",
                                         self.open_level_select,
-                                        self.font_normal)
-        self.next_button = Button((cx - 128, 700), (200, 56), "下一关",
+                                        self.font_normal, kind="ghost")
+        self.next_button = Button((cx - 128, 672), (200, 56), "下一关",
                                   self.next_level, self.font_normal)
-        self.retry_button = Button((cx - 128, 700), (216, 56), "重新开始",
+        self.retry_button = Button((cx - 128, 672), (216, 56), "重新开始",
                                    self.restart_level, self.font_normal)
-        self.home_button = Button((cx + 128, 700), (176, 56), "返回首页",
-                                  self.back_home, self.font_normal)
-        self.select_home_button = Button((cx, 640), (200, 54), "返回",
+        self.home_button = Button((cx + 128, 672), (176, 56), "返回首页",
+                                  self.back_home, self.font_normal,
+                                  kind="ghost")
+        self.select_home_button = Button((cx, 672), (200, 54), "返回",
                                          self.back_home, self.font_normal)
         self.back_button = IconButton(
             (54, 54), 50, icons.arrow_left, self.back_home, outlined=True,
@@ -477,7 +478,7 @@ class Game:
     # ---------------- 存档相关 ----------------
     def open_settings(self):
         self.menu = MenuPanel(
-            (WINDOW_WIDTH // 2, 480), (360, 300), "设置",
+            (WINDOW_WIDTH // 2, 470), (360, 330), "设置",
             [
                 ("音效：%s" % ("开" if self.sound_on else "关"), self.toggle_sound),
                 ("辅助线：%s" % ("开" if self.guide_on else "关"),
@@ -494,7 +495,7 @@ class Game:
 
     def open_menu(self):
         self.menu = MenuPanel(
-            (WINDOW_WIDTH // 2, 500), (380, 380), "菜单",
+            (WINDOW_WIDTH // 2, 496), (380, 412), "菜单",
             [
                 ("撤销一步", self.undo, self.board.can_undo),
                 ("提示（%d 金币）" % HINT_COST, self.use_hint,
@@ -1019,12 +1020,14 @@ class Game:
 
     # ---------------- 绘制 ----------------
     def _present(self):
-        self.screen.fill(theme.get().bg)
+        # 窗口比例和画布不一致时四周会留边，用背景渐变的深色端填，
+        # 画面看着像是「镶」在里面，而不是贴在一块突兀的纯色上
+        self.screen.fill(theme.get().bg_bottom)
         scaled = pygame.transform.smoothscale(self.canvas, self.view_rect.size)
         self.screen.blit(scaled, self.view_rect.topleft)
 
     def _draw(self):
-        self.canvas.fill(theme.get().bg)
+        self._draw_background()
         if self.state == GameState.START:
             self._draw_start()
             return
@@ -1036,20 +1039,24 @@ class Game:
         self.hud.draw_top(self.canvas, HudInfo(self))
         self.hud.draw_bottom(self.canvas, HudInfo(self))
 
+        pal = theme.get()
         if self.state == GameState.LEVEL_CLEAR:
             self._draw_overlay(
                 "%s 通关！" % self.current_level.get("name", "本关"),
                 self.stars,
                 [self.next_button, self.home_button],
-                "线段已全部清空，继续下一关")
+                "线段已全部清空，继续下一关",
+                title_color=pal.success)
         elif self.state == GameState.GAME_OVER:
             self._draw_overlay("挑战失败", 0,
                                [self.retry_button, self.home_button],
-                               "红心耗尽或时间到，再试一次吧")
+                               "红心耗尽或时间到，再试一次吧",
+                               title_color=pal.danger)
         elif self.state == GameState.ALL_CLEAR:
             self._draw_overlay("全部通关！", 3,
                                [self.select_home_button],
-                               "你清空了所有关卡")
+                               "你清空了所有关卡",
+                               title_color=pal.text_gold)
 
         if self.menu is not None:
             self.menu.draw(self.canvas)
@@ -1061,8 +1068,27 @@ class Game:
         self.canvas.blit(img, rect)
         return rect
 
+    def _draw_background(self):
+        """整页底：竖向渐变 + 一团柔光，视线自然被拉到画面中间。"""
+        pal = theme.get()
+        self.canvas.blit(paint.vertical_gradient(
+            (WINDOW_WIDTH, WINDOW_HEIGHT), pal.bg_top, pal.bg_bottom), (0, 0))
+        if self.state in (GameState.PLAYING, GameState.LEVEL_CLEAR,
+                          GameState.GAME_OVER, GameState.ALL_CLEAR):
+            center = self._view_center()
+        else:
+            center = (WINDOW_WIDTH // 2, 520)
+        paint.blit_glow(self.canvas, center, 430, pal.glow, 62, 2.3)
+
     def _draw_board(self):
         pal = theme.get()
+        # 棋盘底下垫一块圆角面板：盘面是「一块台面」，不是漂浮的色块。
+        # 面板比可视区小一圈，放大拖动时棋盘可以铺到面板外面去。
+        panel = self._viewport().inflate(-16, -16)
+        paint.draw_card(self.canvas, panel, 26,
+                        fill_top=pal.board_top, fill_bottom=pal.board_bottom,
+                        border=pal.board_line, border_width=1, alpha=196,
+                        shadow=(16, 110, pal.card_shadow[2], 8))
         # 辅助线点阵：用抗锯齿圆点，缩到最小格子时也不会变成一撮锯齿
         if self.guide_on:
             radius = max(1, int(self.cell_size * 0.055))
@@ -1100,11 +1126,19 @@ class Game:
     def _draw_start(self):
         pal = theme.get()
         cx = WINDOW_WIDTH // 2
-        self._draw_text("一箭又一箭", self.font_title, pal.text,
-                        center=(cx, 260))
-        self._draw_text("Arrow After Arrow", self.font_normal, pal.text_dim,
-                        center=(cx, 316))
 
+        # 标题后面再压一团柔光：标题从背景里「亮」出来
+        paint.blit_glow(self.canvas, (cx, 286), 300, pal.glow, 70, 2.0)
+        paint.text_shadow(self.canvas, self.font_title, "一箭又一箭", pal.text,
+                          center=(cx, 258), shadow=(6, 12, 30), alpha=130,
+                          offset=(0, 3))
+        paint.text_shadow(self.canvas, self.font_normal, "Arrow After Arrow",
+                          pal.text_dim, center=(cx, 312), shadow=(4, 8, 20),
+                          alpha=90, offset=(0, 1))
+
+        # 规则说明装进一张卡片，文字不再是「飘在空背景上」
+        rules_card = pygame.Rect(24, 366, WINDOW_WIDTH - 48, 176)
+        paint.draw_panel(self.canvas, rules_card, 22)
         rules = [
             "点击彩色线段，让它沿自身轨迹从箭头方向滑出",
             "箭头方向上若有其他线段，会被弹回，消耗一颗红心",
@@ -1112,33 +1146,37 @@ class Game:
         ]
         for i, line in enumerate(rules):
             self._draw_text(line, self.font_normal, pal.text_dim,
-                            center=(cx, 420 + i * 46))
+                            center=(cx, rules_card.top + 46 + i * 44))
 
+        # 进度卡片：三行数值各带一个小图标
+        stats_card = pygame.Rect(cx - 154, 560, 308, 146)
+        paint.draw_panel(self.canvas, stats_card, 20)
         cleared = len(self.save.data["cleared"])
         stars = sum(int(v) for v in self.save.data["stars"].values())
+        rows = stats_card.top + 38, stats_card.top + 82, stats_card.top + 122
         self._draw_text("已通关 %d / %d 关" % (cleared, len(self.levels)),
-                        self.font_normal, pal.text_dim, center=(cx, 590))
-        icons.star(self.canvas, (cx - 60, 634), 24, pal.text_gold)
+                        self.font_normal, pal.text, center=(cx, rows[0]))
+        icons.star(self.canvas, (cx - 62, rows[1]), 24, pal.text_gold)
         self._draw_text("累计 %d 星" % stars, self.font_normal, pal.text_dim,
-                        center=(cx + 10, 634))
-        icons.coin(self.canvas, (cx - 60, 674), 13, pal.coin)
+                        center=(cx + 10, rows[1]))
+        icons.coin(self.canvas, (cx - 62, rows[2]), 13, pal.coin)
         self._draw_text("金币 %d" % self.coins, self.font_normal, pal.text_dim,
-                        center=(cx + 10, 674))
+                        center=(cx + 10, rows[2]))
 
         self.start_button.draw(self.canvas)
         self.select_from_start.draw(self.canvas)
         self._draw_text("U 撤销 / H 提示 / A 自动求解 / G 辅助线 / N 随机关卡",
-                        self.font_small, pal.text_dim, center=(cx, 900))
+                        self.font_small, pal.text_dim, center=(cx, 918))
         self._draw_text("放大后按住棋盘拖动 / 滚轮或滑杆缩放 / 方向键微调 · 0 复位",
-                        self.font_small, pal.text_dim, center=(cx, 934))
+                        self.font_small, pal.text_dim, center=(cx, 952))
 
     def _level_rects(self):
         cols = 4
-        size = 118
-        gap = 22
+        size = 124
+        gap = 24
         total_w = cols * size + (cols - 1) * gap
         x0 = (WINDOW_WIDTH - total_w) // 2
-        y0 = 250
+        y0 = 262
         rects = []
         for index in range(len(self.levels)):
             row, col = divmod(index, cols)
@@ -1149,7 +1187,13 @@ class Game:
     def _draw_level_select(self):
         pal = theme.get()
         cx = WINDOW_WIDTH // 2
-        self._draw_text("选择关卡", self.font_title, pal.text, center=(cx, 120))
+        paint.blit_glow(self.canvas, (cx, 116), 260, pal.glow, 58, 2.0)
+        paint.text_shadow(self.canvas, self.font_title, "选择关卡", pal.text,
+                          center=(cx, 116), shadow=(6, 12, 30), alpha=130,
+                          offset=(0, 3))
+        cleared = len(self.save.data["cleared"])
+        self._draw_text("通关上一关即可解锁下一关 · 每关最多三颗星",
+                        self.font_small, pal.text_dim, center=(cx, 172))
         self.back_button.draw(self.canvas)
 
         for index, rect in enumerate(self._level_rects()):
@@ -1157,28 +1201,68 @@ class Game:
             level_id = level.get("id", index + 1)
             unlocked = index == 0 or self.save.is_cleared(
                 self.levels[index - 1].get("id", index))
-            pygame.draw.rect(self.canvas, pal.card if unlocked else pal.panel,
-                             rect, border_radius=16)
-            pygame.draw.rect(self.canvas, pal.outline if unlocked else pal.dot,
-                             rect, 2, border_radius=16)
-            color = pal.text if unlocked else pal.text_dim
+            if unlocked:
+                paint.draw_card(self.canvas, rect, 18,
+                                fill_top=pal.card_top,
+                                fill_bottom=pal.card_bottom,
+                                border=pal.card_line, border_width=2,
+                                sheen=pal.sheen, shadow=pal.card_shadow)
+                color = pal.text
+            else:
+                # 未解锁的关卡压成一块「凹」的暗牌，一眼就能看出点不动
+                paint.draw_card(self.canvas, rect, 18,
+                                fill_top=pal.card_bottom,
+                                fill_bottom=pal.card_bottom,
+                                border=pal.surface_line, border_width=1,
+                                alpha=150)
+                color = pal.text_dim
+
             self._draw_text(str(level_id), self.font_num, color,
-                            center=(rect.centerx, rect.centery - 18))
+                            center=(rect.centerx, rect.centery - 20))
             self._draw_text(level.get("name", "").split(" ")[-1],
                             self.font_small, pal.text_dim,
-                            center=(rect.centerx, rect.centery + 14))
+                            center=(rect.centerx, rect.centery + 12))
             stars = self.save.stars_of(level_id)
             for i in range(3):
                 icons.star(self.canvas,
-                           (rect.centerx - 22 + i * 22, rect.bottom - 20), 17,
+                           (rect.centerx - 24 + i * 24, rect.bottom - 22), 18,
                            pal.text_gold if i < stars else pal.dot)
 
-        self._draw_text("通关上一关即可解锁下一关", self.font_small,
-                        pal.text_dim, center=(cx, 900))
-        self._draw_text("点右下角「随机关卡」按钮可以玩新生成的关",
-                        self.font_small, pal.text_dim, center=(cx, 934))
+        # 底部一张进度卡：把「还差几关」做成一条进度条，顺带把下方那片
+        # 空白填起来，整页的视觉重心不会全堆在标题上
+        stats = pygame.Rect(cx - 190, 752, 380, 130)
+        paint.draw_panel(self.canvas, stats, 20)
+        total = len(self.levels)
+        stars_total = sum(int(v) for v in self.save.data["stars"].values())
+        self._draw_text("已通关 %d / %d 关" % (cleared, total),
+                        self.font_normal, pal.text,
+                        center=(cx, stats.top + 36))
+        track = pygame.Rect(stats.left + 40, stats.top + 62,
+                            stats.width - 80, 14)
+        paint.draw_card(self.canvas, track, track.height // 2,
+                        fill_top=paint.mix(pal.slider_track, pal.card_line,
+                                           0.5),
+                        fill_bottom=pal.slider_track,
+                        border=pal.surface_line, border_width=1, alpha=235)
+        fill = pygame.Rect(track.left, track.top,
+                           int(track.width * cleared / max(1, total)),
+                           track.height)
+        if fill.width >= 6:
+            pygame.draw.rect(self.canvas, pal.accent, fill,
+                             border_radius=fill.height // 2)
+            upper = pygame.Rect(fill.left, fill.top, fill.width,
+                                fill.height // 2 + 1)
+            pygame.draw.rect(self.canvas, paint.mix(pal.accent,
+                                                    (255, 255, 255), 0.4),
+                             upper, border_radius=fill.height // 2)
+        self._draw_text("累计 %d 星 · 金币 %d" % (stars_total, self.coins),
+                        self.font_small, pal.text_dim,
+                        center=(cx, stats.top + 102))
 
-    def _draw_overlay(self, title, stars, buttons, hint):
+        self._draw_text("按 N 或从游戏菜单里选「随机关卡」可以玩新生成的关",
+                        self.font_small, pal.text_dim, center=(cx, 926))
+
+    def _draw_overlay(self, title, stars, buttons, hint, title_color=None):
         pal = theme.get()
         veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         veil.fill(pal.veil)
@@ -1186,18 +1270,29 @@ class Game:
 
         panel = pygame.Rect(0, 0, 520, 340)
         panel.center = (WINDOW_WIDTH // 2, 560)
-        pygame.draw.rect(self.canvas, pal.card, panel, border_radius=20)
-        pygame.draw.rect(self.canvas, pal.outline, panel, 3, border_radius=20)
+        # 结算面板是画面里最「高」的一层：投影压得比普通卡片重一点
+        paint.draw_panel(self.canvas, panel, 26, border_width=3,
+                         shadow=(18, 150, pal.card_shadow[2], 14))
+        # 标题上方一条渐隐的高光，像牌面顶部的一道光
+        header = pygame.Rect(panel.left + 2, panel.top + 2,
+                             panel.width - 4, 4)
+        pygame.draw.rect(self.canvas, pal.card_line, header, border_radius=2)
 
-        self._draw_text(title, self.font_big, pal.text,
-                        center=(panel.centerx, panel.top + 64))
+        paint.text_shadow(self.canvas, self.font_big, title,
+                          title_color or pal.text,
+                          center=(panel.centerx, panel.top + 68),
+                          shadow=(6, 12, 30), alpha=130, offset=(0, 3))
         if stars:
             for i in range(3):
-                icons.star(self.canvas,
-                           (panel.centerx - 56 + i * 56, panel.top + 128), 44,
+                center = (panel.centerx - 56 + i * 56, panel.top + 130)
+                if i < stars:
+                    paint.blit_glow(self.canvas, center, 46, pal.text_gold,
+                                    150, 2.0)
+                icons.star(self.canvas, center, 44,
                            pal.text_gold if i < stars else pal.dot)
-        self._draw_text(hint, self.font_normal, pal.text_dim,
-                        center=(panel.centerx, panel.top + 196))
+        paint.text_shadow(self.canvas, self.font_normal, hint, pal.text_dim,
+                          center=(panel.centerx, panel.top + 196),
+                          shadow=(4, 8, 20), alpha=90, offset=(0, 1))
         for button in buttons:
             button.draw(self.canvas)
 

@@ -102,6 +102,11 @@ def main():
     game.open_menu()
     shoot(game, "menu.png")
 
+    # 设置面板
+    game.open_settings()
+    shoot(game, "settings.png")
+    game.menu = None
+
     # 日间主题
     if theme.get().name != "day":
         game.toggle_theme()
@@ -110,6 +115,11 @@ def main():
     game._load_level(game.levels[2])
     game.state = GameState.PLAYING
     shoot(game, "playing_day.png")
+
+    # 日间主题下的结算面板（浅底遮罩是另一套参数，单独出一张核对）
+    game.stars = 2
+    game.state = GameState.LEVEL_CLEAR
+    shoot(game, "level_clear_day.png")
 
     pygame.quit()
 
