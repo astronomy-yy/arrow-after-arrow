@@ -811,6 +811,9 @@ class Game:
         self.random_counter += 1
         level["id"] = self.random_counter
         self.level_number = self.random_counter
+        # 随机关卡不按下标追踪；把 level_index 归位，避免遗留自上一玩法
+        # （如字母 26 关）的大下标，让任何依赖 level_index 的代码越界。
+        self.level_index = 0
         self._load_level(level)
         self.state = GameState.PLAYING
         self.toast("随机关卡来啦")
@@ -1164,16 +1167,19 @@ class Game:
         self.stars = STAR_TABLE.get(penalty, 1)
         self.coins += COIN_REWARD_CLEAR
         self.save.data["coins"] = self.coins
-        # 只有列表里的关卡才记进度：随机关卡是现场生成的，不写进存档
-        if self.current_level is self.levels[self.level_index]:
+        # 只有「列表里的正经关卡」才记进度：随机关卡是现场生成的，
+        # 不在 self.levels 里，绝不写进存档。用身份比较（is）做成员判断，
+        # 这样即便 level_index 因切换玩法而越界也不会崩。
+        is_official = any(self.current_level is lv for lv in self.levels)
+        if is_official:
             self.save.mark_clear(self.current_level.get("id",
                                                         self.level_index + 1),
                                  self.stars, self.coins, self.time_left)
         else:
             self.save.flush()
         audio.play("clear")
-        if (self.current_level is self.levels[-1]
-                and self.level_index == len(self.levels) - 1):
+        # 通关的恰是列表最后一关才进 ALL_CLEAR
+        if is_official and self.level_index == len(self.levels) - 1:
             self.state = GameState.ALL_CLEAR
         else:
             self.state = GameState.LEVEL_CLEAR
