@@ -21,7 +21,7 @@ import sys
 
 import pygame
 
-from game import audio, icons, letters as letters_module, paint, theme
+from game import appicon, audio, icons, letters as letters_module, paint, theme
 from game.animations import (
     TOAST_DURATION,
     BlockedFeedback,
@@ -267,6 +267,9 @@ class Game:
                                        desktop)
         self.screen = pygame.display.set_mode(start_size, pygame.RESIZABLE)
         pygame.display.set_caption(TITLE)
+        # 窗口 / 任务栏 / Alt-Tab 的图标，和打包进 exe 的那张是同一套画法
+        # （见 game/appicon.py）：现场画，不读图片。
+        pygame.display.set_icon(appicon.surface(64))
         self.clock = pygame.time.Clock()
 
         self.canvas = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
