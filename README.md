@@ -135,6 +135,7 @@ arrow-after-arrow/
 │   ├── animations.py          # 飞出滑行（沿折线取段）、残影、弹回摆动、提示呼吸
 │   ├── hud.py                 # 顶栏 / 底栏控件
 │   ├── icons.py               # 全部图标都是代码画的矢量图，无图片素材
+│   ├── appicon.py             # 程序图标：开始页的缩略版，窗口图标与 exe 图标共用
 │   ├── ui.py                  # 按钮、图标按钮、日夜拨杆、滑杆、菜单面板
 │   ├── audio.py               # 程序合成音效（不依赖任何音频素材）
 │   ├── storage.py             # JSON 存档：进度、星级、金币、设置
@@ -143,6 +144,8 @@ arrow-after-arrow/
 │   ├── generate_levels.py     # 重新生成 game/level.py（支持单关重生成与 --check）
 │   ├── generate_letters.py    # 重新生成 game/level_letters.py（26 个字母）
 │   ├── screenshot.py          # 无窗口离屏渲染，批量导出 assets/screenshots/
+│   ├── make_icon.py           # 把 game/appicon.py 画的图标落成 assets/icon.ico
+│   ├── build_exe.py           # 一键打包成单文件 exe
 │   └── perf_bench.py          # 整帧耗时基准（各界面 × 日夜主题）
 ├── tests/                     # pytest：路径 / 生成器 / 阻挡 / 求解器 / 存档 / 窗口 /
 │                              #   缩放拖动 / 动效 / 线段渲染 / 界面观感 / 字母玩法 / 端到端
@@ -150,6 +153,7 @@ arrow-after-arrow/
 │   ├── design.md              # 设计说明：数据结构、算法、界面布局、动效
 │   └── test-record.md         # T01–T23 测试记录
 ├── assets/screenshots/        # 游戏截图
+├── ArrowAfterArrow.spec       # PyInstaller 打包配置（单文件 exe）
 ├── AIGC记录.md                # AIGC 使用记录
 ├── requirements.txt
 └── .gitignore
@@ -158,7 +162,7 @@ arrow-after-arrow/
 ## 测试与工具
 
 ```bash
-python -m pytest -q                    # 374 个用例，无窗口运行
+python -m pytest -q                    # 385 个用例，无窗口运行
 python tools/generate_levels.py        # 重新生成基础玩法 12 关
 python tools/generate_levels.py --check  # 校验现有 level.py：可通、可解、有阻挡
 python tools/generate_levels.py --stats  # 打印 12 关的难度表
@@ -166,8 +170,32 @@ python tools/generate_letters.py A B   # 重新生成字母玩法里指定的几
 python tools/generate_letters.py --check # 校验 26 个字母关（连通 / 可解 / 有阻挡）
 python tools/generate_letters.py --stats # 打印 26 个字母关的难度表
 python tools/screenshot.py             # 重新导出 assets/screenshots/ 下的 27 张截图
+python tools/make_icon.py              # 生成 assets/icon.ico 与预览图 icon.png
+python tools/build_exe.py              # 打包成 dist/一箭又一箭.exe
 python tools/perf_bench.py             # 打印各界面 × 日夜主题的整帧耗时
 ```
+
+## 打包为可执行文件
+
+```bash
+python tools/build_exe.py              # 产出 dist/一箭又一箭.exe
+```
+
+打包用 PyInstaller + `ArrowAfterArrow.spec`（单文件、无控制台窗口、图标内嵌）。几点说明：
+
+- **包里没有素材**。游戏运行时图形全部由代码绘制、音效由程序合成，所以 `datas` 是空的 ——
+  除了代码和 pygame 自带的 SDL 动态库，不需要额外资源文件。窗口 / 任务栏图标同样由
+  `game/appicon.py` 现场画出来，打包时经 `tools/make_icon.py` 落成 `assets/icon.ico`
+  塞进 exe 的资源段（这两个文件都是生成的，不入库）。
+- **存档不在 exe 旁边**，而是写到用户目录 `~/.arrow_after_arrow/save.json`，
+  所以 exe 放在只读位置也能启动，换台电脑玩也不影响别人。
+- **单文件 exe 每次启动会先解压自身到临时目录**，因此首次启动比文件夹版慢几秒；
+  想追求启动速度可以把 spec 里的单文件模式改成 `COLLECT`（onedir）。
+- **杀软误报**：单文件打包的常见现象，spec 里已经关掉 UPX 压缩来降低概率；
+  如果仍被拦，把 exe 加进白名单，或改用 onedir 版本。
+- 实测（Windows 11 / 桌面 1440×900 / Python 3.14）：exe 约 16 MB，双击到出窗口 1.5 秒；
+  窗口标题、尺寸与位置和 `python main.py` 直跑逐项一致（DPI 感知级别同为「不感知」），
+  即打包没有改变窗口行为。
 
 ## 游戏截图
 

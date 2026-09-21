@@ -14,6 +14,15 @@ env/
 # 测试缓存
 .pytest_cache/
 
+# 打包产物与中间目录（由 tools/build_exe.py 生成）
+build/
+dist/
+*.manifest
+
+# 图标：由 tools/make_icon.py 从 game/appicon.py 现场画出来，不入库
+assets/icon.ico
+assets/icon.png
+
 # 编辑器/系统
 .vscode/
 .idea/
